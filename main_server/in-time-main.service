@@ -9,23 +9,17 @@ Type=simple
 User=in-time
 Group=in-time
 WorkingDirectory=/var/lib/in-time/main-server
-# Address gunicorn listens on and number of workers. Default: local only, behind a reverse
-# proxy (nginx...). Override them in .env: SERVER=0.0.0.0:8000 for local relays without a proxy.
+
 Environment=SERVER=127.0.0.1:8000
 Environment=WORKERS=2
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/var/lib/in-time/main-server/.env
+
 ExecStart=/var/lib/in-time/main-server/.venv/bin/gunicorn --workers ${WORKERS} --threads 4 \
     --timeout 120 --bind ${SERVER} --access-logfile - main:app
+
 Restart=on-failure
 RestartSec=5
-
-# Hardening: the service can only write to its own folder
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=true
-ReadWritePaths=/var/lib/in-time
 
 [Install]
 WantedBy=multi-user.target

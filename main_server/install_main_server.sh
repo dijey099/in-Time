@@ -8,9 +8,10 @@
 # snapshots, face models and the Python environment.
 #
 # Options (environment variables):
-#   IN_TIME_REPO    GitHub repository        (default dijey099/in-Time)
 #   IN_TIME_BRANCH  branch                   (default master)
 #   IN_TIME_SRC     install from this local main_server folder instead of downloading
+#   IN_TIME_POSTGRES  "existing" (a PostgreSQL server is ready) or "install" (install it here):
+#                     answers the PostgreSQL question, needed when there is no terminal
 set -eu
 
 REPO="${IN_TIME_REPO:-dijey099/in-Time}"
@@ -40,6 +41,64 @@ fi
 
 command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
 command -v tar >/dev/null 2>&1 || die "tar is required"
+
+# --------------------------------------------------------------- postgresql
+# The question is read from the terminal: stdin is the script itself with "curl ... | sh".
+ask_yes_no() {  # $1 = question; returns 0 for yes
+    while :; do
+        printf '%s [y/n] ' "$1" >/dev/tty
+        read -r answer </dev/tty || return 1
+        case "$answer" in
+            [Yy]|[Yy][Ee][Ss]) return 0 ;;
+            [Nn]|[Nn][Oo]) return 1 ;;
+        esac
+    done
+}
+
+cat <<EOF
+
+The in-Time main server stores its data in PostgreSQL (version 12 or newer).
+It can use an existing PostgreSQL server or this script can install 
+PostgreSQL here and create the "in-time" database for you.
+
+EOF
+if command -v psql >/dev/null 2>&1 || [ -d /etc/postgresql ] || [ -d /var/lib/pgsql ]; then
+    echo "(PostgreSQL seems to be installed on this machine already.)"
+fi
+case "${IN_TIME_POSTGRES:-}" in
+    existing) PG_INSTALL=no ;;
+    install) PG_INSTALL=yes ;;
+    "")
+        if ! (: </dev/tty) 2>/dev/null; then
+            die "no terminal to ask: run again with IN_TIME_POSTGRES=existing or IN_TIME_POSTGRES=install"
+        fi
+        if ask_yes_no "Do you already have a working PostgreSQL server?"; then PG_INSTALL=no; else PG_INSTALL=yes; fi
+        ;;
+    *) die "IN_TIME_POSTGRES must be 'existing' or 'install'" ;;
+esac
+
+if [ "$PG_INSTALL" = yes ]; then
+    if command -v apt-get >/dev/null 2>&1; then
+        say "Installing PostgreSQL (apt)"
+        $SUDO apt-get update -qq || die "apt-get update failed"
+        $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql >/dev/null \
+            || die "could not install PostgreSQL"
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+        PKG="$(command -v dnf || command -v yum)"
+        say "Installing PostgreSQL ($(basename "$PKG"))"
+        # on Fedora/RHEL the "postgresql" package is only the client: the server is postgresql-server
+        $SUDO "$PKG" install -y -q postgresql-server postgresql >/dev/null || die "could not install PostgreSQL"
+        if ! $SUDO test -f /var/lib/pgsql/data/PG_VERSION; then
+            say "Initialising the database cluster"
+            $SUDO postgresql-setup --initdb >/dev/null || die "postgresql-setup --initdb failed"
+        fi
+    else
+        die "unsupported package manager: install PostgreSQL yourself, then run this script again and answer y"
+    fi
+    $SUDO systemctl enable --now postgresql >/dev/null 2>&1 \
+        || die "could not start PostgreSQL (systemctl enable --now postgresql)"
+    command -v psql >/dev/null 2>&1 || die "PostgreSQL installed but psql not found"
+fi
 
 # ------------------------------------------------------------------ python
 PYTHON="$(command -v python3 || true)"
@@ -134,6 +193,35 @@ if [ ! -f "$APP/.env" ]; then
     KEY="$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(48))')"
     $SUDO sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$KEY|" "$APP/.env"
 fi
+# PostgreSQL installed by this script: role and database "in-time", reached through the local
+# socket with peer authentication (system user in-time = database role in-time, no password).
+DB_URL="postgresql+psycopg://in-time@/in-time?host=/var/run/postgresql"
+if [ "$PG_INSTALL" = yes ]; then
+    say "Creating the PostgreSQL role and database \"in-time\""
+    as_postgres() {
+        if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+            (cd / && runuser -u postgres -- "$@")
+        else
+            (cd / && sudo -u postgres "$@")
+        fi
+    }
+    i=0
+    until as_postgres psql -qAt -c 'SELECT 1' >/dev/null 2>&1; do  # server still starting
+        i=$((i + 1)); [ "$i" -lt 30 ] || die "PostgreSQL does not answer"
+        sleep 1
+    done
+    if [ -z "$(as_postgres psql -qAt -c "SELECT 1 FROM pg_roles WHERE rolname = 'in-time'")" ]; then
+        as_postgres psql -q -v ON_ERROR_STOP=1 -c 'CREATE ROLE "in-time" LOGIN' || die "could not create the role"
+    fi
+    if [ -z "$(as_postgres psql -qAt -c "SELECT 1 FROM pg_database WHERE datname = 'in-time'")" ]; then
+        as_postgres psql -q -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "in-time" OWNER "in-time"' \
+            || die "could not create the database"
+    fi
+    if [ "$FIRST_ENV" = yes ]; then
+        $SUDO sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$DB_URL|" "$APP/.env"
+    fi
+fi
+
 $SUDO chown -R "$SVC_USER:$SVC_USER" "$BASE"
 $SUDO chmod 750 "$BASE" "$APP"
 $SUDO chmod 600 "$APP/.env"
@@ -170,12 +258,19 @@ cat <<EOF
 in-Time main server installed in $APP
 
 EOF
+if [ "$PG_INSTALL" = yes ] && [ "$FIRST_ENV" = yes ]; then
+    DB_NOTE="     DATABASE_URL already points to the local \"in-time\" database created by this script."
+elif [ "$PG_INSTALL" = yes ]; then
+    DB_NOTE="     For the local database created by this script: DATABASE_URL=$DB_URL"
+else
+    DB_NOTE="     Set DATABASE_URL to your PostgreSQL database."
+fi
 if [ "$FIRST_ENV" = yes ]; then
     cat <<EOF
 Next steps:
-  1. Edit the configuration (database URL, admin password, departments...):
+  1. Edit the configuration (admin password, departments...):
        sudo nano $APP/.env
-     The main server needs PostgreSQL: set DATABASE_URL to your database.
+$DB_NOTE
   2. Start the server:
        sudo systemctl start $SERVICE
 EOF
@@ -185,6 +280,7 @@ else
     cat <<EOF
 Updated. Your .env was kept (compare it with .env.example for new settings).
 Check the configuration if needed (sudo nano $APP/.env), then start the server:
+$DB_NOTE
   sudo systemctl start $SERVICE
 EOF
 fi

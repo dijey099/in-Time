@@ -118,14 +118,19 @@ and `data/models/` (relay) from another installation.
 curl -sSL https://raw.githubusercontent.com/dijey099/in-Time/refs/heads/master/main_server/install_main_server.sh | sh
 ```
 
-The script downloads `main_server` into `/var/lib/in-time/main-server`, creates the system user `in-time`
-(home `/var/lib/in-time`), a Python environment with the dependencies, a `.env` with a random
-`SECRET_KEY`, and the `in-time-main` service (enabled, not started). Then set the database, admin
-password and departments in `/var/lib/in-time/main-server/.env` and run `sudo systemctl start in-time-main`
+The script first asks whether you already have a working PostgreSQL server. If not, it installs
+PostgreSQL with the package manager (`apt` on Debian/Ubuntu, `dnf`/`yum` on Fedora/RHEL) and creates the
+`in-time` role and database, reached through the local socket without a password. Then it downloads
+`main_server` into `/var/lib/in-time/main-server`, creates the system user `in-time` (home
+`/var/lib/in-time`), a Python environment with the dependencies, a `.env` with a random `SECRET_KEY`
+(and `DATABASE_URL` set when it created the database), and the `in-time-main` service (enabled, not
+started). Then set the admin password and departments (and the database if you use your own) in
+`/var/lib/in-time/main-server/.env` and run `sudo systemctl start in-time-main`
 (logs: `sudo journalctl -u in-time-main -f`). The service listens on `127.0.0.1:8000`; change
 `SERVER` / `WORKERS` in `.env` if needed. Running the script again updates the code and keeps
-`.env`, photos, snapshots and models (the service is restarted if it was running). It needs Python 3.10+
-and a PostgreSQL database (e.g. the Docker Compose file below).
+`.env`, photos, snapshots and models (the service is restarted if it was running). It needs Python 3.10+.
+Without a terminal (automation), answer the PostgreSQL question in advance:
+`curl -sSL .../install_main_server.sh | IN_TIME_POSTGRES=install sh` (or `IN_TIME_POSTGRES=existing`).
 
 **Manually:**
 
