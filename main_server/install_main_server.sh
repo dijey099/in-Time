@@ -42,6 +42,38 @@ fi
 command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
 command -v tar >/dev/null 2>&1 || die "tar is required"
 
+# ---------------------------------------------------------------- packages
+# apt can be locked by automatic updates (unattended-upgrades), often right after a server is
+# created: wait for it (up to 15 min) instead of failing.
+APT_UPDATED=no
+apt_run() {  # apt-get arguments...
+    tries=0
+    while :; do
+        if out="$($SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+                apt-get -o DPkg::Lock::Timeout=30 -qq "$@" 2>&1)"; then
+            return 0
+        fi
+        case "$out" in
+            *"Could not get lock"*|*"Unable to acquire"*|*"Unable to lock"*)
+                tries=$((tries + 1))
+                [ "$tries" -le 30 ] || break
+                [ "$tries" -eq 1 ] && say "Waiting for another package installation to finish (automatic updates)..."
+                sleep 15
+                ;;
+            *) break ;;
+        esac
+    done
+    printf '%s\n' "$out" >&2
+    return 1
+}
+apt_install() {  # packages...
+    if [ "$APT_UPDATED" = no ]; then
+        apt_run update || die "apt-get update failed"
+        APT_UPDATED=yes
+    fi
+    apt_run install -y "$@"
+}
+
 # --------------------------------------------------------------- postgresql
 # The question is read from the terminal: stdin is the script itself with "curl ... | sh".
 ask_yes_no() {  # $1 = question; returns 0 for yes
@@ -80,9 +112,7 @@ esac
 if [ "$PG_INSTALL" = yes ]; then
     if command -v apt-get >/dev/null 2>&1; then
         say "Installing PostgreSQL (apt)"
-        $SUDO apt-get update -qq || die "apt-get update failed"
-        $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql >/dev/null \
-            || die "could not install PostgreSQL"
+        apt_install postgresql || die "could not install PostgreSQL"
     elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
         PKG="$(command -v dnf || command -v yum)"
         say "Installing PostgreSQL ($(basename "$PKG"))"
@@ -108,9 +138,7 @@ PYTHON="$(command -v python3 || true)"
 if ! "$PYTHON" -c 'import venv, ensurepip' >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
         say "Installing python3-venv"
-        if ! { $SUDO apt-get update -qq && $SUDO apt-get install -y -qq python3-venv >/dev/null; }; then
-            die "could not install python3-venv"
-        fi
+        apt_install python3-venv || die "could not install python3-venv"
     else
         die "the Python venv module is missing: install it with your package manager (python3-venv)"
     fi
