@@ -1,0 +1,29 @@
+<table>
+  <thead><tr><th>Time</th><th>Timezone</th><th>User</th><th>Relay</th><th>Dir.</th><th>Status</th><th>Face check</th><th>Snapshot</th></tr></thead>
+  <tbody>
+  {% for c in checkins %}
+    <tr>
+      {% set lt = c.local_timestamp %}
+      <td class="nowrap" title="Site time ({{ c.timezone or 'time zone not recorded: server time' }})">{{ lt.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+      <td class="nowrap">{% if c.timezone %}{{ c.timezone }} <small class="muted">{{ lt.strftime('%z')[:3] }}:{{ lt.strftime('%z')[3:] }}</small>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td><a href="{{ url_for('admin.checkins', user=c.user_id, **{'from': c.timestamp.astimezone().date().isoformat()}) }}">{{ c.user_id }}</a> · {{ c.user.full_name }}</td>
+      <td>{{ c.relay_label }}</td>
+      <td><span class="pill {{ 'in' if c.direction == 'IN' else 'out' }}">{{ c.direction }}</span></td>
+      <td><span class="pill {{ 'ok' if c.status == 'OK' else 'ko' }}">{{ c.status }}</span>{% if c.reason %} <small>{{ c.reason }}</small>{% endif %}</td>
+      {% set vs = c.verify_status %}
+      <td class="nowrap">
+        {%- if vs == 'match' %}<span class="pill ok" title="Snapshot matches the user's photo (similarity {{ '%.2f'|format(c.verify_score) }})">match</span> <small class="muted">{{ '%.2f'|format(c.verify_score) }}</small>
+        {%- elif vs == 'mismatch' %}<span class="pill ko" title="Snapshot does NOT match the user's photo">mismatch</span> <small class="muted">{{ '%.2f'|format(c.verify_score) }}</small>
+        {%- elif vs == 'no_face' %}<span class="pill ko" title="No usable face in the snapshot">no face</span>
+        {%- elif vs == 'no_snapshot' %}<span class="pill ko" title="The relay sent no snapshot">no snapshot</span>
+        {%- elif vs == 'legacy' %}<span class="muted" title="Recorded before the face check existed">not checked</span>
+        {%- elif vs == 'no_reference' %}<span class="pill" title="The user has no usable photo: can't be checked">no photo</span>
+        {%- else %}<span class="muted" title="Checked in the background within a minute">pending</span>{% endif -%}
+      </td>
+      <td>{% if c.snapshot_path %}<a href="{{ url_for('admin.snapshot', name=c.snapshot_path.split('/')[-1]) }}" target="_blank">view</a>{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">No check-ins</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Check-ins{% endblock %}
+{% block content %}
+<h1>Check-ins</h1>
+<form method="get" class="filters">
+  {% for name, label, d in [('from', 'From', d_from), ('to', 'To', d_to)] %}
+  <label>{{ label }}
+    <span class="date-field">
+      <input name="{{ name }}" value="{{ d.strftime('%d/%m/%Y') }}" placeholder="dd/mm/yyyy" size="10" maxlength="10"
+             pattern="\d{1,2}/\d{1,2}/\d{4}" title="Date as dd/mm/yyyy" autocomplete="off" required>
+      <input type="date" class="visually-hidden" tabindex="-1" aria-hidden="true" value="{{ d.isoformat() }}">
+      <button type="button" class="date-pick" aria-label="Choose a date" title="Choose a date"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="2.5" y="4" width="15" height="13.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2.5 8h15M6.5 2.5v3M13.5 2.5v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+    </span>
+  </label>
+  {% endfor %}
+  <label>User ID <input name="user" value="{{ args.user or '' }}" size="10"></label>
+  <label>Relay
+    <select name="relay"><option value="">all</option>
+      {% for r in relays %}<option value="{{ r.id }}" {{ 'selected' if args.relay == r.id|string }}>{{ r.name }}</option>{% endfor %}
+    </select></label>
+  <label>Status
+    <select name="status"><option value="">all</option>
+      {% for s in ['OK', 'KO'] %}<option {{ 'selected' if args.status == s }}>{{ s }}</option>{% endfor %}
+    </select></label>
+  <label>Face check
+    <select name="face"><option value="">all</option>
+      {% for v, l in [('flagged', 'flagged'), ('match', 'match'), ('unchecked', 'not checked')] %}<option value="{{ v }}" {{ 'selected' if args.face == v }}>{{ l }}</option>{% endfor %}
+    </select></label>
+  <button>Filter</button>
+  <a class="button secondary" href="{{ url_for('admin.checkins_csv', **args) }}">Export CSV</a>
+</form>
+{% include "_checkin_rows.html" %}
+{% endblock %}
+{% block scripts %}
+<script>
+// Dates are typed and shown as dd/mm/yyyy; the calendar button opens the browser's date picker
+// (whose own display follows the browser language) and copies the chosen day back as dd/mm/yyyy.
+document.querySelectorAll('.date-field').forEach((field) => {
+  const text = field.querySelector('input[name]'), picker = field.querySelector('input[type=date]');
+  const toIso = (v) => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(v.trim());
+                         return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : ''; };
+  field.querySelector('.date-pick').onclick = () => {
+    picker.value = toIso(text.value) || picker.value;
+    try { picker.showPicker(); } catch (e) { picker.focus(); picker.click(); }
+  };
+  picker.onchange = () => {
+    const [y, m, d] = picker.value.split('-');
+    if (y) text.value = `${d}/${m}/${y}`;
+  };
+});
+</script>
+{% endblock %}

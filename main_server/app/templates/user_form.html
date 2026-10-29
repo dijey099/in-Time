@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit ' ~ user.id if user else 'New user' }}{% endblock %}
+{% block content %}
+<h1>{{ 'Edit user ' ~ user.id if user else 'New user' }}</h1>
+<form method="post" enctype="multipart/form-data" class="card" id="user-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="descriptor" id="descriptor">
+  {% if not user %}
+    <label>ID <input name="id" required pattern="[A-Za-z0-9_\-]{1,64}" value="{{ request.form.id or '' }}" placeholder="e.g. E001"></label>
+  {% endif %}
+  <label>Full name <input name="full_name" required value="{{ request.form.full_name or (user.full_name if user else '') }}"></label>
+  {% set current_dept = request.form.department or (user.department if user else '') %}
+  <label>Department
+    {% if departments %}
+    <select name="department" required>
+      <option value="" disabled {{ 'selected' if current_dept not in departments }}>— choose a department —</option>
+      {% for d in departments %}<option {{ 'selected' if d == current_dept }}>{{ d }}</option>{% endfor %}
+    </select>
+    {% else %}
+    <span class="error">No departments configured: set <code>DEPARTMENTS</code> in the main server <code>.env</code>.</span>
+    {% endif %}
+  </label>
+  {% if departments and user and user.department and user.department not in departments %}
+    <p class="error">This user's department "{{ user.department }}" is no longer in DEPARTMENTS: choose another one.</p>
+  {% endif %}
+  <label class="check"><input type="checkbox" name="active" {{ 'checked' if not user or user.active }}> Active</label>
+
+  <fieldset class="photo-field">
+    <legend>Photo <span class="muted">— one clearly visible, front-facing face</span></legend>
+    <input type="file" name="photo" id="photo" accept=".jpg,.jpeg,.png,image/jpeg,image/png" class="visually-hidden" tabindex="-1">
+    <div class="row">
+      <button type="button" id="btn-file" class="secondary">Choose a file</button>
+      <button type="button" id="btn-camera" class="secondary">Use the camera</button>
+      <span id="file-name" class="muted"></span>
+    </div>
+
+    <div id="camera-panel" class="camera-panel hidden">
+      <div class="camera-view">
+        <video id="video" autoplay muted playsinline></video>
+        <div id="cam-frame" class="cam-frame"></div>
+      </div>
+      <div class="row">
+        <select id="camera-select" class="hidden" aria-label="Camera"></select>
+        <button type="button" id="btn-shoot" disabled>Take photo</button>
+        <button type="button" id="btn-cam-cancel" class="link">Close camera</button>
+        <span id="cam-hint" class="muted">Starting camera…</span>
+      </div>
+    </div>
+
+    <div class="photo-box">
+      <div class="preview">
+        <canvas id="canvas" class="hidden"></canvas>
+        {% if user and user.photo_path %}
+          <img id="current" src="{{ url_for('admin.photo', name=user.photo_path.split('/')[-1]) }}?v={{ user.updated_at.timestamp()|int if user.updated_at else '' }}" alt="">
+        {% endif %}
+      </div>
+      <div>
+        <p id="face-status" class="muted">{% if user and user.face_embedding %}Face data present.{% elif user and user.photo_path and user.face_model %}No usable face in this photo: the user can't check in.{% elif user and user.photo_path %}Photo not checked by the server yet.{% else %}No photo yet.{% endif %}</p>
+        <label class="check"><input type="checkbox" name="allow_no_face" id="allow_no_face"> Save the photo even if no face is detected (user won't be recognised)</label>
+      </div>
+    </div>
+  </fieldset>
+  <div class="row">
+    <button id="save">Save</button>
+    <a href="{{ url_for('admin.users') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/face-api/face-api.js') }}"></script>
+<script src="{{ url_for('static', filename='faces.js') }}"></script>
+<script>
+const MODEL_URL = '{{ url_for("static", filename="vendor/face-api/model") }}';
+const $ = (id) => document.getElementById(id);
+const input = $('photo');
+const status = $('face-status');
+const canvas = $('canvas');
+const save = $('save');
+const allow = $('allow_no_face');
+const form = $('user-form');
+let faceOk = true;
+let cameraBlob = null;   // photo taken with the camera (fallback when files can't be set on the input)
+
+function refreshButton() { save.disabled = !(faceOk || allow.checked); }
+allow.onchange = refreshButton;
+
+// ------------------------------------------------------------ file selection
+$('btn-file').onclick = () => { stopCamera(); input.click(); };
+input.onchange = () => {
+  cameraBlob = null;
+  const file = input.files[0];
+  $('file-name').textContent = file ? file.name : '';
+  analyse(file);
+};
+
+// -------------------------------------------------------------------- camera
+const video = $('video');
+let stream = null, liveTimer = null;
+
+$('btn-camera').onclick = openCamera;
+$('btn-cam-cancel').onclick = stopCamera;
+$('camera-select').onchange = () => startStream($('camera-select').value);
+
+async function openCamera() {
+  const hint = $('cam-hint');
+  $('camera-panel').classList.remove('hidden');
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    hint.textContent = 'The browser only allows the camera on HTTPS (or http://localhost). Use "Choose a file", or open the admin through HTTPS.';
+    hint.className = 'error';
+    return;
+  }
+  hint.className = 'muted';
+  hint.textContent = 'Starting camera…';
+  try {
+    await startStream();
+    // list cameras (labels are only available once permission was granted)
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    const sel = $('camera-select');
+    sel.innerHTML = '';
+    cams.forEach((c, i) => sel.add(new Option(c.label || `Camera ${i + 1}`, c.deviceId)));
+    const current = stream.getVideoTracks()[0].getSettings().deviceId;
+    if (current) sel.value = current;
+    sel.classList.toggle('hidden', cams.length < 2);
+    Faces.loadLive(MODEL_URL).then(startLiveCheck).catch(() => { hint.textContent = 'Position the face in the frame'; });
+  } catch (e) {
+    hint.textContent = 'Camera unavailable: ' + (e.name === 'NotAllowedError' ? 'permission denied' : e.message);
+    hint.className = 'error';
+  }
+}
+
+async function startStream(deviceId) {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: deviceId ? {deviceId: {exact: deviceId}, width: {ideal: 1280}, height: {ideal: 960}}
+                    : {facingMode: 'user', width: {ideal: 1280}, height: {ideal: 960}},
+  });
+  video.srcObject = stream;
+  await video.play();
+  $('btn-shoot').disabled = false;
+}
+
+// Live hint: green frame when exactly one face is visible
+function startLiveCheck() {
+  clearInterval(liveTimer);
+  let running = false;
+  liveTimer = setInterval(async () => {
+    if (running || !stream || video.readyState < 2) return;
+    running = true;
+    try {
+      const n = await Faces.countFaces(video);
+      $('cam-frame').className = 'cam-frame ' + (n === 1 ? 'ok' : n > 1 ? 'ko' : '');
+      $('cam-hint').textContent = n === 1 ? 'Face found — take the photo' : n > 1 ? 'Only one person in the picture, please' : 'Look at the camera';
+    } finally { running = false; }
+  }, 400);
+}
+
+function stopCamera() {
+  clearInterval(liveTimer);
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null;
+  video.srcObject = null;
+  $('btn-shoot').disabled = true;
+  $('camera-panel').classList.add('hidden');
+}
+
+$('btn-shoot').onclick = () => {
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0);   // stored un-mirrored (true orientation)
+  c.toBlob((blob) => {
+    stopCamera();
+    const file = new File([blob], 'camera.jpg', {type: 'image/jpeg'});
+    cameraBlob = null;
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+    } catch (e) {
+      cameraBlob = file;  // older browser: sent manually on submit
+    }
+    $('file-name').textContent = 'Photo taken with the camera';
+    analyse(file);
+  }, 'image/jpeg', 0.92);
+};
+
+// Older browsers that can't put the captured photo into the file input
+form.addEventListener('submit', async (ev) => {
+  if (!cameraBlob || (input.files && input.files.length)) return;
+  ev.preventDefault();
+  const data = new FormData(form);
+  data.set('photo', cameraBlob, 'camera.jpg');
+  const r = await fetch(form.action || location.href, {method: 'POST', body: data});
+  if (r.redirected) location.href = r.url; else { document.open(); document.write(await r.text()); document.close(); }
+});
+
+// ---------------------------------------------------------- face analysis
+async function analyse(file) {
+  $('descriptor').value = '';
+  if (!file) { faceOk = true; refreshButton(); return; }
+  faceOk = false; refreshButton();
+  status.textContent = 'Analysing photo…';
+  status.className = 'muted';
+  const current = $('current');
+  if (current) current.remove();
+  try {
+    await Faces.load(MODEL_URL);
+    const img = await Faces.loadImage(URL.createObjectURL(file));
+    const scale = Math.min(1, 320 / img.width);
+    canvas.width = img.width * scale; canvas.height = img.height * scale;
+    canvas.classList.remove("hidden");
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const res = await Faces.describe(img);
+    if (res.error) {
+      status.textContent = res.error.charAt(0).toUpperCase() + res.error.slice(1);
+      status.className = 'error';
+    } else {
+      const b = res.box;
+      ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 3;
+      ctx.strokeRect(b.x * scale, b.y * scale, b.width * scale, b.height * scale);
+      $('descriptor').value = JSON.stringify(res.descriptor);
+      status.textContent = 'Face detected';
+      status.className = 'ok';
+      faceOk = true;
+    }
+  } catch (e) {
+    status.textContent = e.message; status.className = 'error';
+  }
+  refreshButton();
+}
+</script>
+{% endblock %}

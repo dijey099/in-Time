@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Relays{% endblock %}
+{% block content %}
+<h1>Relay servers</h1>
+
+{% if new_token %}
+<div class="flash token token-line">
+  <code id="new-token">{{ new_token.token }}</code>
+  <button type="button" id="copy-token">Copy</button>
+</div>
+{% endif %}
+
+<table>
+  <thead><tr><th>Name</th><th>Allowed IPs</th><th>Max in</th><th>Min out</th><th class="center">Enabled</th><th class="center">Local</th><th></th><th>Last seen</th><th></th></tr></thead>
+  <tbody>
+  {% for r in relays %}
+    {% set fid = 'relay-' ~ r.id %}
+    <tr class="relay-row">
+      <td><input form="{{ fid }}" name="name" value="{{ r.name }}" required aria-label="Name"></td>
+      <td><input form="{{ fid }}" name="allowed_ips" value="{{ r.allowed_ips }}" title="IPs or CIDR, comma separated. * = any" required aria-label="Allowed IPs"></td>
+      <td><input form="{{ fid }}" name="max_in_time" type="time" value="{{ r.max_in_time or '' }}" title="Empty = global setting" aria-label="Max in time"></td>
+      <td><input form="{{ fid }}" name="min_out_time" type="time" value="{{ r.min_out_time or '' }}" title="Empty = global setting" aria-label="Min out time"></td>
+      <td class="center"><input form="{{ fid }}" type="checkbox" name="enabled" {{ 'checked' if r.enabled }} aria-label="Enabled"></td>
+      <td class="center"><input form="{{ fid }}" type="checkbox" name="local_relay" {{ 'checked' if r.local_relay }} aria-label="Local relay"></td>
+      <td>
+        <form id="{{ fid }}" method="post" action="{{ url_for('admin.relay_edit', relay_id=r.id) }}">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <button>Save</button>
+        </form>
+      </td>
+      <td class="nowrap">{{ r.last_seen.astimezone().strftime('%d/%m/%Y %H:%M') if r.last_seen else 'never' }}<br><small class="muted">{{ r.last_ip or '' }}</small></td>
+      <td class="actions">
+        <form method="post" action="{{ url_for('admin.relay_token', relay_id=r.id) }}" onsubmit="return confirm('Generate a new token? The old one stops working immediately.')">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link">New token</button>
+        </form>
+        <form method="post" action="{{ url_for('admin.relay_delete', relay_id=r.id) }}" onsubmit="return confirm('Delete {{ r.name }}?')">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Leave <b>Max in</b> / <b>Min out</b> empty to use the global values from Settings.</p>
+
+<h2>Add a relay</h2>
+<form method="post" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <label>Name <input name="name" required placeholder="SITE A"></label>
+  <label>Allowed IPs <input name="allowed_ips" required placeholder="203.0.113.10, 198.51.100.0/24"></label>
+  <p class="muted">Public IP(s) the relay reaches this server from. Use * only for testing.</p>
+  <div class="row">
+    <label>Max in time (optional) <input name="max_in_time" type="time"></label>
+    <label>Min out time (optional) <input name="min_out_time" type="time"></label>
+  </div>
+  <div class="check-row">
+    <label class="check"><input type="checkbox" name="local_relay"> Local relay</label>
+    <span class="hint" tabindex="0" role="img" aria-label="This relay server is on the local network and can connect directly to the Main server without a reverse proxy." data-tip="This relay server is on the local network and can connect directly to the Main server without a reverse proxy."><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor"/><rect x="9" y="8.5" width="2" height="6" rx="1" fill="#fff"/><circle cx="10" cy="5.8" r="1.2" fill="#fff"/></svg></span>
+  </div>
+  <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+  <button>Create relay</button>
+</form>
+{% endblock %}
+{% block scripts %}
+{% if new_token %}
+<script>
+document.getElementById('copy-token').onclick = async (ev) => {
+  const btn = ev.currentTarget, text = document.getElementById('new-token').textContent.trim();
+  let ok = false;
+  try {                                   // clipboard API: HTTPS or localhost only
+    await navigator.clipboard.writeText(text); ok = true;
+  } catch (e) {                           // fallback for plain HTTP
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+    ta.remove();
+  }
+  btn.textContent = ok ? 'Copied' : 'Select & copy manually';
+  setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+};
+</script>
+{% endif %}
+{% endblock %}

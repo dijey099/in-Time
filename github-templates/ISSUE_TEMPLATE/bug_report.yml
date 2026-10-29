@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Do not paste tokens, passwords, `.env` / `relay.ini` contents, or photos of people.**
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Main server (API / admin console)
+        - Relay server (window / sync)
+        - Phone check-in page
+        - Scripts (fetch_models.py, update_cf_ips.py)
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See error ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error messages
+      description: Main server output, `relay_server/data/relay.log`, or the browser console. Remove any secrets first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: e.g. v1.0.0 or commit hash
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, browser and phone model, reverse proxy / Cloudflare setup.
+      placeholder: |
+        Main server: Ubuntu 24.04, Python 3.12, nginx + Cloudflare
+        Relay: Windows 11, Python 3.12
+        Phone: Android 14, Chrome 130

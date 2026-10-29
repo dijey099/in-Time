@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an improvement or a new feature
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what makes it hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work?
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      multiple: true
+      options:
+        - Main server (API / admin console)
+        - Relay server (window / sync)
+        - Phone check-in page
+        - Scripts / deployment
+        - Documentation
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

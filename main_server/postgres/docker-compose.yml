@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      # Override in postgres/.env (see .env.example). Defaults are for local development only.
+      POSTGRES_USER: ${POSTGRES_USER:-in-time}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-in-time}
+      POSTGRES_DB: ${POSTGRES_DB:-in-time}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ./data:/var/lib/postgresql/data

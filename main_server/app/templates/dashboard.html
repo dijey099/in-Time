@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Today</h1>
+<div class="stats">
+  <div class="card"><b>{{ stats.users }}</b><span>active users</span></div>
+  <div class="card"><b>{{ stats.today }}</b><span>check-ins today</span></div>
+  <div class="card"><b>{{ stats.late }}</b><span>KO today</span></div>
+  <a class="card {{ 'alert' if stats.flagged }}" href="{{ url_for('admin.checkins', face='flagged') }}" title="Snapshot doesn't match the user's photo, has no face, or is missing"><b>{{ stats.flagged }}</b><span>flagged by the face check</span></a>
+  <a class="card {{ 'warn' if stats.missing_face }}" href="{{ url_for('admin.users') }}"><b>{{ stats.missing_face }}</b><span>users without face data</span></a>
+</div>
+{% if face_engine and not face_engine.ok %}
+<div class="flash warn">Face check not running yet: {{ face_engine.message }}</div>
+{% endif %}
+
+<h2>Relays</h2>
+<table>
+  <thead><tr><th>Relay</th><th>Last seen</th><th>From IP</th><th>State</th></tr></thead>
+  <tbody>
+  {% for r in relays %}
+    {% set online = r.last_seen and (now - r.last_seen).total_seconds() < 180 %}
+    <tr>
+      <td>{{ r.name }}{% if r.local_relay %} <span class="pill local" title="Local relay: direct connection, proxy settings bypassed">local</span>{% endif %}</td>
+      <td>{{ r.last_seen.astimezone().strftime('%d/%m/%Y %H:%M:%S') if r.last_seen else 'never' }}</td>
+      <td>{{ r.last_ip or '' }}</td>
+      <td>{% if not r.enabled %}<span class="pill">disabled</span>{% elif online %}<span class="pill ok">online</span>{% else %}<span class="pill ko">offline</span>{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No relay yet — <a href="{{ url_for('admin.relays') }}">add one</a></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Latest check-ins</h2>
+{% include "_checkin_rows.html" %}
+{% endblock %}

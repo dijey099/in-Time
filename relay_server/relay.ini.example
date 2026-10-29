@@ -1,0 +1,39 @@
+; Copy to relay.ini (same folder as start_relay.py or start_relay.exe) and edit.
+
+[main_server]
+; Public URL of the Main server (HTTPS strongly recommended)
+url = https://intime.example.com
+; Token generated in the Main server admin > Relays page
+token =
+; true, false, or the path to a CA bundle (.pem) for a private certificate
+verify_ssl = true
+; Seconds between two synchronisations (a new check-in triggers one immediately)
+sync_interval = 30
+
+[relay]
+; Address/port the phones connect to (HTTPS, self-signed certificate)
+host = 0.0.0.0
+port = 8443
+; Ignore a second identical IN/OUT by the same person within N seconds
+duplicate_window = 60
+; Only clients from private networks (LAN) are accepted unless true
+allow_public_clients = false
+; Where the SQLite cache, photos, snapshots, certificate and logs are stored
+data_dir = data
+
+[face]
+; The relay identifies the person in the phone snapshot itself: the phone only takes
+; the picture. Similarity required between the snapshot and the user's photo
+; (0 to 1, higher = stricter). 0.363 is OpenCV's reference value; 0.40-0.45 is stricter.
+min_similarity = 0.363
+
+[time]
+; Check-in times come from Google (HTTPS), never from the PC clock, so changing the
+; Windows date/time has no effect. Without internet, new check-ins are refused.
+; Time zone of the site (IANA name). Set it: otherwise the PC time zone is used,
+; which a user could change. Examples: Indian/Antananarivo, Europe/Paris, Africa/Nairobi
+timezone = Indian/Antananarivo
+; HTTPS address(es) whose Date header gives the time (comma separated, tried in order)
+urls = https://www.google.com/generate_204
+; Seconds between two internet/time checks (retried every 10 s after a failure)
+check_interval = 60

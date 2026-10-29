@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <meta name="theme-color" content="#2E14A0">
+  <title>{% block title %}in-Time{% endblock %} · in-Time</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% if session.admin %}
+{% set nav = [('admin.dashboard', 'Dashboard'), ('admin.checkins', 'Check-ins'), ('admin.users', 'Users'),
+              ('admin.relays', 'Relays'), ('admin.settings', 'Settings')] %}
+<header class="top">
+  <a class="brand" href="{{ url_for('admin.dashboard') }}">
+    <span class="brand-tile"><img src="{{ url_for('static', filename='img/logo.png') }}" alt="" width="28" height="28"></span>
+    <span>in-Time</span>
+  </a>
+  <nav>
+    {% for endpoint, label in nav %}
+      <a href="{{ url_for(endpoint) }}" class="{{ 'active' if request.endpoint == endpoint
+         or (endpoint == 'admin.users' and request.endpoint == 'admin.user_form') }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+  <form method="post" action="{{ url_for('admin.logout') }}" class="logout">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <button class="ghost-light">Log out</button>
+  </form>
+</header>
+{% endif %}
+{% block page %}
+<main>
+  {% if session.admin and face_models and not face_models.ok %}
+    <div class="flash error">{{ face_models.message }} Photos can't be analysed until this is done.</div>
+  {% endif %}
+  {% for cat, msg in get_flashed_messages(with_categories=true) %}
+    <div class="flash {{ cat }}">{{ msg }}</div>
+  {% endfor %}
+  {% block content %}{% endblock %}
+</main>
+{% endblock %}
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<form method="post" class="card narrow">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <label>Max in time — an IN after this is <b>late</b> (KO)
+    <input name="max_in_time" type="time" value="{{ values.max_in_time }}" required></label>
+  <label>Min out time — an OUT before this is <b>early</b> (KO)
+    <input name="min_out_time" type="time" value="{{ values.min_out_time }}" required></label>
+  <p class="muted">Times are the relay's local time. A relay can override them on the Relays page.</p>
+  <button>Save</button>
+</form>
+{% endblock %}

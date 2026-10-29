@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a0c63">
+  <link rel="icon" type="image/png" href="img/logo.png">
+  <title>in-Time check-in</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <span class="brand"><img class="logo" src="img/logo.png" alt=""><span id="site">in-Time</span></span>
+    <span id="clock"></span>
+  </header>
+
+  <section id="stage">
+    <video id="video" autoplay muted playsinline></video>
+    <div id="frame"></div>
+    <div id="hint">Starting…</div>
+  </section>
+
+  <!-- shown once a face is recognised -->
+  <section id="confirm" class="sheet hidden">
+    <img id="c-photo" alt="">
+    <div class="who">
+      <div id="c-name"></div>
+      <div id="c-id" class="muted"></div>
+    </div>
+    <div class="dirs">
+      <button data-dir="IN" class="dir in">IN</button>
+      <button data-dir="OUT" class="dir out">OUT</button>
+    </div>
+    <div id="c-countdown" class="muted"></div>
+    <button id="c-cancel" class="ghost">Not me</button>
+  </section>
+
+  <!-- result -->
+  <section id="result" class="sheet hidden">
+    <div id="r-icon"></div>
+    <div id="r-title"></div>
+    <div id="r-detail" class="muted"></div>
+  </section>
+
+  <footer id="footer">Loading face models…</footer>
+
+  <script src="vendor/face-api/face-api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
