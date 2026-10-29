@@ -21,6 +21,7 @@ APP="$BASE/main-server"
 SVC_USER=in-time
 SERVICE=in-time-main
 UNIT="/etc/systemd/system/$SERVICE.service"
+CRON_FILE=/etc/cron.d/in-time-cf-ips
 # Kept when updating an existing installation
 KEEP=".env .venv photos snapshots models app/static/vendor cf_ips.txt"
 # Not needed to run the server
@@ -275,6 +276,35 @@ say "Installing the $SERVICE service"
 $SUDO install -m 644 "$TMP/$SERVICE.service" "$UNIT"
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE.service" >/dev/null 2>&1 || $SUDO systemctl enable "$SERVICE.service"
+
+# ------------------------------------------------- Cloudflare IP ranges (cron)
+# Refresh of cf_ips.txt every 2 hours (used when CF_PROXY=true); the server reloads the file on its own.
+if [ ! -d /etc/cron.d ] || ! { command -v cron >/dev/null 2>&1 || command -v crond >/dev/null 2>&1; }; then
+    say "Installing cron"
+    if command -v apt-get >/dev/null 2>&1; then
+        apt_install cron || die "could not install cron"
+        $SUDO systemctl enable --now cron >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+        $SUDO "$(command -v dnf || command -v yum)" install -y -q cronie >/dev/null || die "could not install cronie"
+        $SUDO systemctl enable --now crond >/dev/null 2>&1 || true
+    else
+        warn "cron not found: install it to refresh the Cloudflare IP ranges every 2 hours ($APP/update_cf_ips.py)"
+    fi
+fi
+if [ -d /etc/cron.d ]; then
+    say "Scheduling the Cloudflare IP ranges update every 2 hours ($CRON_FILE)"
+    $SUDO tee "$CRON_FILE" >/dev/null <<EOF
+# in-Time main server: refresh the Cloudflare IP ranges (cf_ips.txt) every 2 hours.
+# The file is only rewritten when Cloudflare's list changed. Installed by install_main_server.sh.
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+17 */2 * * * $SVC_USER cd $APP && .venv/bin/python update_cf_ips.py >> $BASE/cf_ips_update.log 2>&1
+EOF
+    $SUDO chmod 644 "$CRON_FILE"
+    # refresh once now (not fatal: e.g. no internet access yet)
+    (cd "$APP" && run_as_user env HOME="$BASE" .venv/bin/python update_cf_ips.py) >/dev/null 2>&1 \
+        || warn "could not update the Cloudflare IP ranges now (retried every 2 hours by cron)"
+fi
 
 if [ "$WAS_ACTIVE" = yes ]; then
     say "Restarting $SERVICE"

@@ -213,10 +213,11 @@ e.g. gunicorn listening on the LAN (`-b 0.0.0.0:8000`) with its LAN IP in *Allow
 
 Cloudflare's ranges live in `main_server/cf_ips.txt`. Keep them current with `python update_cf_ips.py`:
 it rewrites the file only when Cloudflare's list changed (`--check` only reports), and the server reloads
-the file on its own. Example daily cron job:
+the file on its own. The install script schedules it every 2 hours (`/etc/cron.d/in-time-cf-ips`,
+log in `/var/lib/in-time/cf_ips_update.log`). For a manual installation, example cron job (every 2 hours):
 
 ```
-17 4 * * * cd /path/to/in-Time/main_server && .venv/bin/python update_cf_ips.py >> cf_ips_update.log 2>&1
+17 */2 * * * cd /path/to/in-Time/main_server && .venv/bin/python update_cf_ips.py >> cf_ips_update.log 2>&1
 ```
 
 ### Relay (`relay_server/relay.ini`)
