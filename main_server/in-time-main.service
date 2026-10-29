@@ -10,7 +10,7 @@ User=in-time
 Group=in-time
 WorkingDirectory=/var/lib/in-time/main-server
 
-Environment=SERVER=127.0.0.1:8000
+Environment=SERVER=0.0.0.0:8000
 Environment=WORKERS=2
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/var/lib/in-time/main-server/.env
