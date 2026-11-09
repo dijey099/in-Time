@@ -1,0 +1,25 @@
+[Unit]
+Description=in-Time main server (admin console + relay API)
+Documentation=https://github.com/dijey099/in-Time
+After=network-online.target postgresql.service docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=in-time
+Group=in-time
+WorkingDirectory=/var/lib/in-time/main-server
+
+Environment=SERVER=127.0.0.1:8000
+Environment=WORKERS=2
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/var/lib/in-time/main-server/.env
+
+ExecStart=/var/lib/in-time/main-server/.venv/bin/gunicorn --workers ${WORKERS} --threads 4 \
+    --timeout 120 --bind ${SERVER} --access-logfile - main:app
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

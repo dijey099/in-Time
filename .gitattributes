@@ -1,0 +1,13 @@
+# Normalise line endings in the repository
+* text=auto eol=lf
+
+# Windows scripts must keep CRLF to run correctly in cmd.exe
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.bin binary
+*.drawio linguist-documentation

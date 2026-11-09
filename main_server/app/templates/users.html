@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<div class="row">
+  <h1>Users</h1>
+  <form method="get" class="inline">
+    <input name="q" value="{{ q }}" placeholder="Search ID or name">
+    <select name="department" aria-label="Department">
+      <option value="">All departments</option>
+      {% for d in departments %}<option {{ 'selected' if d == dept }}>{{ d }}</option>{% endfor %}
+      <option value="__none__" {{ 'selected' if dept == '__none__' }}>No department</option>
+    </select>
+    <button>Search</button>
+  </form>
+  <a class="button" href="{{ url_for('admin.user_form') }}">+ New user</a>
+</div>
+
+{% if not departments %}
+<div class="flash error">No departments configured: set <code>DEPARTMENTS</code> in the main server <code>.env</code> (e.g. <code>DEPARTMENTS=Sales,Direction,Manager</code>).</div>
+{% elif invalid_count %}
+<div class="flash warn">{{ invalid_count }} user(s) have no valid department.
+  <a href="{{ url_for('admin.users', department='__none__') }}">Show users without a department</a> and edit them to choose one.</div>
+{% endif %}
+
+{% set pending = users|selectattr('photo_path')|rejectattr('face_model')|list %}
+{% set noface = users|selectattr('photo_path')|selectattr('face_model')|rejectattr('face_embedding')|list %}
+{% if pending or noface %}
+<div class="flash warn">
+  {% if pending %}{{ pending|length }} photo(s) not checked by the server yet (done automatically within a minute).{% endif %}
+  {% if noface %}{{ noface|length }} user(s) have no usable face in their photo and can't check in: {{ noface|map(attribute='id')|join(', ') }}.{% endif %}
+  {% if pending %}
+  <form method="post" action="{{ url_for('admin.users_check_faces') }}" class="inline-block">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="secondary small">Check photos now</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
+<table>
+  <thead><tr><th>Photo</th><th>ID</th><th>Full name</th><th>Department</th><th>Face data</th><th>Active</th><th></th></tr></thead>
+  <tbody>
+  {% for u in users %}
+    <tr>
+      <td>{% if u.photo_path %}<img class="thumb" src="{{ url_for('admin.photo', name=u.photo_path.split('/')[-1]) }}?v={{ u.updated_at.timestamp()|int if u.updated_at else '' }}" alt="">{% endif %}</td>
+      <td>{{ u.id }}</td>
+      <td>{{ u.full_name }}</td>
+      <td>{% if u.department and u.department in departments %}{{ u.department }}{% elif u.department %}<span class="pill ko" title="Not in DEPARTMENTS anymore">{{ u.department }}</span>{% else %}<span class="pill ko">none</span>{% endif %}</td>
+      <td>{% if u.face_embedding %}<span class="pill ok">yes</span>{% elif not u.photo_path %}<span class="pill ko">no photo</span>{% elif u.face_model %}<span class="pill ko" title="No usable face in the photo">no face</span>{% else %}<span class="pill">pending</span>{% endif %}</td>
+      <td>{{ 'yes' if u.active else 'no' }}</td>
+      <td class="actions">
+        <a href="{{ url_for('admin.user_form', user_id=u.id) }}">Edit</a>
+        <form method="post" action="{{ url_for('admin.user_delete', user_id=u.id) }}" onsubmit="return confirm('Delete {{ u.id }}?')">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">No users</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

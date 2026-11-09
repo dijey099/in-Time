@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      # Set in postgres/.env (see .env.example): no default password.
+      POSTGRES_USER: ${POSTGRES_USER:-in-time}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in postgres/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-in-time}
+    ports:
+      # This machine only by default (Docker bypasses ufw): never publish it to the network
+      - "${POSTGRES_PORT:-127.0.0.1:5433}:5432"
+    volumes:
+      - ./data:/var/lib/postgresql/data

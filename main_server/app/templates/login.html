@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block body_class %}auth{% endblock %}
+{% block page %}
+<main class="auth-main">
+  <form method="post" class="auth-card" autocomplete="on">
+    <img class="auth-logo" src="{{ url_for('static', filename='img/logo.png') }}" alt="in-Time logo" width="96" height="96">
+    <h1>in-Time</h1>
+    <p class="auth-sub">Admin console</p>
+
+    {% for cat, msg in get_flashed_messages(with_categories=true) %}
+      <div class="flash {{ cat }}" role="alert">{{ msg }}</div>
+    {% endfor %}
+
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label>Username
+      <input name="username" autocomplete="username" value="{{ request.form.username or '' }}"
+             {{ '' if request.form.username else 'autofocus' }} required>
+    </label>
+    <label>Password
+      <span class="password-field">
+        <input name="password" id="password" type="password" autocomplete="current-password"
+               {{ 'autofocus' if request.form.username }} required>
+        <button type="button" class="reveal" id="reveal" aria-label="Show password" title="Show password">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 5c-5 0-9 4.5-10 7 1 2.5 5 7 10 7s9-4.5 10-7c-1-2.5-5-7-10-7zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9zm0-7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>
+        </button>
+      </span>
+    </label>
+    <button class="primary wide">Log in</button>
+  </form>
+  <p class="auth-foot">Face-recognition attendance</p>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById('reveal').onclick = (ev) => {
+  const input = document.getElementById('password');
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  ev.currentTarget.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  ev.currentTarget.classList.toggle('on', show);
+  input.focus();
+};
+</script>
+{% endblock %}
