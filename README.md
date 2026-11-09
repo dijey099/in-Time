@@ -182,7 +182,7 @@ The camera option on the user page needs the admin console to be served over HTT
    - Linux (ufw): `sudo ufw allow 8443/tcp`
 3. Start the relay in one of two ways.
 
-**Executable.** [Download the relay server](https://drive.google.com/file/d/1p0irx8bWgNmvxpeDPBs_OPc0qnxsjaxE/view?usp=sharing), then put `start_relay.exe` (Windows) or `start_relay` (Linux) in the folder with `relay.ini`
+**Executable.** [Download the relay server](https://drive.google.com/drive/folders/1LGi-ymOp_Rc3_-FmAAgkOsDYD4yjZSgU?usp=sharing), then put `start_relay.exe` (Windows) or `start_relay` (Linux) in the folder with `relay.ini`
 and double-click it. Its `data/` folder is created next to it. Double-clicked, the Windows executable hides
 its console and only the relay window shows. Run from a terminal (`start_relay.exe --no-gui`), it runs
 headless and prints the log there. The log is always in `data/relay.log`, and start-up errors (missing
