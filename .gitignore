@@ -13,7 +13,7 @@ main_server/snapshots/
 relay_server/data/
 relay_server/start_relay.exe
 relay_server/start_relay
-relay_server/Relay_Server.zip
+relay_server/*.zip
 main_server/postgres/data/
 *.db
 *.db-shm
