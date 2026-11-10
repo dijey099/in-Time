@@ -1,7 +1,7 @@
 # in-Time
 
 Face-recognition attendance system for multi-site organisations. Employees check **in** and **out**
-by looking at a phone camera on their site's Wi-Fi. Each site runs a small **relay server** that keeps
+by looking at a phone camera on their site's Wi-Fi, with the phone's GPS location recorded. Each site runs a small **relay server** that keeps
 working offline, and a central **main server** collects everything.
 
 ```
@@ -23,7 +23,7 @@ working offline, and a central **main server** collects everything.
 
 ![Web admin console](main.png)
 
-**Relay GUI** (one per site): QR code for phones, trusted clock, internet and main server status, and today's check-ins.
+**Relay GUI** (one per site): QR code for phones, the relay's public IP, trusted clock, internet and main server status, and today's check-ins.
 
 ![Relay GUI](relay.png)
 
@@ -31,11 +31,12 @@ working offline, and a central **main server** collects everything.
 
 - **Face recognition on the relay**: the phone only takes the picture; the relay identifies the person (OpenCV YuNet + SFace), so a check-in can't be forged by sending a request with someone's ID.
 - **Face check on the main server**: every check-in snapshot is compared again with the user's photo; mismatches, missing faces and missing snapshots are flagged on the dashboard for review.
+- **GPS location required**: the phone page starts only when location is allowed and on, every check-in carries the phone's location (signed by the relay), and check-ins made **outside the site area** (a circle picked on a map for each relay) get a warning on the dashboard. They are still recorded.
 - **Tamper-proof time**: check-in times come from Google over HTTPS, never from the relay PC's clock, so changing the Windows date/time has no effect.
 - **Main-server outages tolerated**: the relay caches users and settings, decides OK/KO locally and syncs check-ins when the main server is reachable again. Without **internet**, new check-ins are refused (no trusted time).
 - **Late / early detection**: IN after *max in time* or OUT before *min out time* is flagged KO. Global values with per-site overrides.
-- **Relay window**: today's check-ins with OK/KO, sync state per row, main server status (Reachable / Unreachable / Error), QR code for phones.
-- **Admin console**: users (photo upload or camera capture, face check), relays (tokens, allowed IPs), settings, check-in history with filters and CSV export, snapshot of every check-in.
+- **Relay window**: today's check-ins with OK/KO, sync state per row (blue cloud = synced, grey = not synced), main server status (Reachable / Unreachable / Error), QR code for phones, the relay's public IP.
+- **Admin console**: users (photo upload or camera capture, face check), relays (tokens, allowed IPs, site area on a map), settings, check-in history with filters and CSV export, snapshot and location of every check-in.
 - **Relay authentication**: bearer token + allowed IP/CIDR list + per-relay signing key; works behind nginx/Apache/Traefik and Cloudflare.
 - **Open source (AGPL-3.0) and self-hosted**: no license key, no activation, no limit on users or sites.
 
@@ -53,16 +54,19 @@ working offline, and a central **main server** collects everything.
    photo has one usable face and keeps its face data as the reference. The photo is saved as `photos/<ID>.jpg|png`.
 2. **Relays** sync every 30 s: ping, settings, users and their photos. Each relay computes the face data
    of new or changed photos itself.
-3. **Phones** on the site's Wi-Fi open `https://<relay-ip>:8443`. The phone only detects that a face is in
-   front of the camera, then sends the picture to the relay, which recognises the person. The person sees
+3. **Phones** on the site's Wi-Fi open `https://<relay-ip>:8443`. The page first asks for the phone's
+   location and starts the camera only once it has a GPS fix (see [GPS location](#gps-location-and-site-area)).
+   The phone only detects that a face is in
+   front of the camera, then sends the picture and its location to the relay, which recognises the person. The person sees
    their name, IN/OUT is suggested (alternating during the day) and sent after 4 s unless they tap the
    other option.
 4. The **relay** accepts the check-in only with the one-time token it issued for that picture, stamps it
-   with the trusted (internet) time, shows OK/KO, keeps the picture as the snapshot, stores it in SQLite
+   with the trusted (internet) time and the phone's location, shows OK/KO, keeps the picture as the snapshot, stores it in SQLite
    and pushes it to the main server immediately, or later if the main server is unreachable.
 5. The **main server** recomputes OK/KO itself (site time zone and settings), compares the snapshot with the
    user's photo again and flags the check-in if they don't match, if the picture is a replay, or if it
-   arrived suspiciously late (see [Face check](#face-check-and-anti-fraud)).
+   arrived suspiciously late (see [Face check](#face-check-and-anti-fraud)). It also compares the location
+   with the relay's site area and warns about check-ins made outside it.
 
 ### Face check and anti-fraud
 
@@ -75,9 +79,9 @@ The phone never decides who is checking in, and never receives anyone's face dat
 - Identification requests are rate-limited per phone (15 per 10 s).
 
 On the main server, every snapshot received is compared with the user's photo. The **Face check** column
-of the check-ins shows *match* (with the similarity), or flags *mismatch*, *no face*, *no snapshot* or
+of the check-ins shows *match*, or flags *mismatch*, *no face*, *no snapshot* or
 *replay* (the snapshot is the user's reference photo, practically identical to it, or a picture already
-used for another check-in);
+used for another check-in). Hover the result to see the similarity as a percentage (e.g. *72% similar*);
 the dashboard counts flagged check-ins of the day and the Check-ins page can filter them. Flagged
 check-ins are still recorded: review the snapshot and decide. Check-ins received while the models were
 loading are checked by a background pass within a minute; `flask --app main verify-checkins` runs it on
@@ -97,11 +101,49 @@ The main server trusts the relay as little as possible:
   the relay was connected is flagged **delayed** (it may have been held back before syncing).
   Check-ins made while the main server was unreachable are not flagged.
 - Snapshots must be JPEG images; check-in IDs must be UUIDs (they name the snapshot files).
+- The check-in's **GPS location** is part of what the relay signs: removing or changing it on the relay PC
+  makes the check-in rejected (`bad_signature`).
 
 Limits: there is no liveness detection, so holding a printed photo or a screen in front of the camera can
 still fool it; every check-in keeps its snapshot for review. Photos, snapshots and face data are
 **biometric personal data**: keep them out of version control (see `.gitignore`), restrict access, and
 check the data-protection rules that apply to you.
+
+### GPS location and site area
+
+**On the phone.** The check-in page asks for the phone's location before it starts the camera. Without
+it, nothing can be checked in: the page explains what to do when location is **blocked** for the site
+(allow it in the browser settings, then reload) or **switched off** (turn on GPS / location services),
+and retries on its own. A location older than 60 s, or lost during use, stops recognition until a new
+fix arrives. The relay also refuses `POST /api/identify` and `POST /api/checkins` without a valid location,
+so the rule can't be bypassed by skipping the page.
+
+**With the check-in.** The relay stores the latitude, longitude and accuracy (metres) reported by the phone
+in the check-in and signs them with it. The main server saves them; the **Location** column of the
+check-ins links to the place on OpenStreetMap, and the CSV export has `latitude`, `longitude`,
+`location_accuracy_m`, `area_check` and `distance_from_site_m`.
+
+**Site area.** Each relay has a site area: a circle (centre + radius, 10 m to 50 km) picked on a map
+when the relay is created (required) or later with **Edit** on the Relays page. Search an address, use
+the browser's location, or click the map, then set the radius. A check-in is *outside* when it is
+farther from the centre than the radius, even giving the phone's reported GPS accuracy the benefit of the
+doubt (up to 100 m, so a huge reported accuracy can't hide a far-away check-in). Location never refuses a
+check-in:
+
+| Location column | Meaning |
+|---|---|
+| *on site* | inside the area |
+| *outside* (+ distance beyond its edge) | outside the area: counted in **outside site area** on the dashboard, listed in its warning, filterable on Check-ins (*Location → outside site area*) |
+| *no location* | the relay has an area but sent no location (relay older than this feature) |
+| *map* | location recorded, but the relay had no area when the check-in arrived |
+
+The area is compared when the check-in arrives; changing an area later doesn't re-check older check-ins.
+The dashboard also lists enabled relays without an area.
+
+The map uses OpenStreetMap's volunteer-run tile servers and Nominatim address search by default. Map
+requests send the console's origin as `Referer`, as their usage policy requires (the rest of the console
+sends no referrer). For heavier use, set another provider with `MAP_TILE_URL` / `MAP_TILE_ATTRIBUTION`
+(see [Configuration](#main-server-main_serverenv)).
 
 ### Trusted time and internet check
 
@@ -118,7 +160,7 @@ effect either. Without it the PC time zone is used and the relay window shows a 
 | Situation | Check-ins |
 |---|---|
 | Internet OK, main server OK | accepted, synced immediately |
-| Internet OK, main server down | accepted, synced when it is back (grey cloud) |
+| Internet OK, main server down | accepted, synced when it is back (grey cloud, blue once synced) |
 | No internet | refused |
 
 ## Getting started
@@ -154,9 +196,15 @@ gunicorn -w 4 -b 127.0.0.1:8000 main:app
 ```
 
 The server refuses to start while `SECRET_KEY` (32+ characters) or `ADMIN_PASSWORD` (12+ characters) is
-empty or a default value. Tables are created automatically. Log in, then **Relays → Add a relay**: enter the public IP(s) the site
-connects from (CIDR allowed, `*` = any, for testing only) and copy the token, which is shown once.
-`flask --app main create-relay "SITE A" --ips 203.0.113.10` does the same from the shell.
+empty or a default value. Tables are created (and new columns added) automatically. Log in, then
+**Relays → New relay**: enter the public IP(s) the site connects from (CIDR allowed, `*` = any, for
+testing only; the relay window shows its public IP), pick the site area on the map, and copy the token,
+which is shown once. `flask --app main create-relay "SITE A" --ips 203.0.113.10` does the same from the
+shell (set the area afterwards with **Edit**).
+
+The **Relays** page lists each relay's name, allowed IPs, time zone and last seen time (with an
+online/offline dot and the IP it connects from). **Edit** opens all its settings in a pop-up: name, allowed IPs,
+time zone, max in / min out times, enabled, local relay, site area and **Generate new token**.
 
 The camera option on the user page needs the admin console to be served over HTTPS (or `localhost`).
 
@@ -205,8 +253,14 @@ every package it can import). OpenCV (face recognition) makes up a large part of
 (about 130 MB on Linux); the face models are not bundled but downloaded into `data/models` on first start.
 
 On first visit, phones show a certificate warning (self-signed certificate, needed because browsers only
-allow the camera over HTTPS): accept it once. The certificate is regenerated if the relay's LAN IP
+allow the camera and location over HTTPS): accept it once, then allow the camera and the location. The certificate is regenerated if the relay's LAN IP
 changes, so give the relay PC/Server a fixed IP or DHCP reservation.
+
+**Relay window.** Next to the QR code, the window shows the relay's **public IP** as seen from the
+internet (from `https://ifconfig.me/ip`, refreshed every 10 min): the address to put in the relay's
+*Allowed IPs* on the main server. The **Main server** column of the check-ins shows a blue cloud when the
+check-in is synced and a grey cloud when it isn't yet (hover for the sync time or the reason it was
+refused; **Retry rejected** sends refused ones again).
 
 ## Configuration
 
@@ -230,6 +284,8 @@ changes, so give the relay PC/Server a fixed IP or DHCP reservation.
 | `FACE_REPLAY_SIMILARITY` | A snapshot at least this similar to the photo is flagged *replay* (default `0.97`) |
 | `CHECKIN_MAX_DELAY_SECONDS` | Flag *delayed* above this delay while the relay was connected (default `600`) |
 | `FACE_MODELS_DIR` | Where the OpenCV face models are stored (default `models`) |
+| `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION` | Map tiles of the site area picker (default: OpenStreetMap, fine for a few admins). Use another provider, with its attribution, for heavier use |
+| `MAP_SEARCH_URL` | Address search of the map (Nominatim API, default OpenStreetMap's). Empty: no search box, the site is clicked on the map |
 
 ### Admin login lock
 
@@ -305,8 +361,8 @@ each check-in carries its snapshot, which the main server checks against the use
 send their machine ID in the `X-Relay-Id` header and their Ed25519 public key in `X-Relay-Key`: a token is
 accepted from only one relay server, bound at its first request. Every request is signed: `X-Relay-Time` (Unix time,
 within 5 min of the main server's clock) and `X-Relay-Signature` (Ed25519 over method, path, time and
-SHA-256 of the body). Check-ins carry `seq`, `snapshot_sha256` and `signature` (made when the check-in was
-created).
+SHA-256 of the body). Check-ins carry `seq`, `snapshot_sha256`, `location` (`{lat, lng, accuracy}`, the
+phone's GPS location) and `signature` (made when the check-in was created; `location` is signed when present).
 
 ## Contributing
 
@@ -330,5 +386,6 @@ complete source code of that version under the same license. The admin console l
 (`SOURCE_URL` in `.env`); point it to your own repository if you run a modified version.
 
 Third-party components keep their own licenses: face-api.js (downloaded at run time) is © Vladimir Mandic
-and contributors, MIT License; OpenCV, Apache 2.0, and its face models YuNet (MIT) and SFace (Apache 2.0);
+and contributors, MIT License; Leaflet (map of the admin console, `main_server/app/static/leaflet/`),
+BSD-2-Clause; map data © OpenStreetMap contributors (ODbL); OpenCV, Apache 2.0, and its face models YuNet (MIT) and SFace (Apache 2.0);
 Qt for Python (PySide6), LGPL-3.0.
