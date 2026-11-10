@@ -4,8 +4,10 @@
 #   curl -sSL https://raw.githubusercontent.com/dijey099/in-Time/refs/heads/master/main_server/install_main_server.sh | sh
 #
 # Installs into /var/lib/in-time/main-server, runs as the system user "in-time" (home /var/lib/in-time)
-# with the service in-time-main. Running it again updates the code and keeps .env, photos,
-# snapshots, face models and the Python environment.
+# with the service in-time-main. Running it again detects the existing installation first and
+# updates it: the code is replaced, the Python environment (.venv) is updated, and .env (backed up
+# first), photos, snapshots, face models and the database are kept. If the update fails, the
+# previous version is put back.
 #
 # Options (environment variables):
 #   IN_TIME_BRANCH  branch or tag            (default master; prefer a release tag)
@@ -13,7 +15,8 @@
 #   IN_TIME_GITHUB_TOKEN  GitHub token, only for a private fork of the repository
 #   IN_TIME_SRC     install from this local main_server folder instead of downloading
 #   IN_TIME_POSTGRES  "existing" (a PostgreSQL server is ready) or "install" (install it here):
-#                     answers the PostgreSQL question, needed when there is no terminal
+#                     answers the PostgreSQL question of a new installation, needed when there is
+#                     no terminal (not asked when updating an existing installation)
 set -eu
 
 REPO="${IN_TIME_REPO:-dijey099/in-Time}"
@@ -24,8 +27,8 @@ SVC_USER=in-time
 SERVICE=in-time-main
 UNIT="/etc/systemd/system/$SERVICE.service"
 CRON_FILE=/etc/cron.d/in-time-cf-ips
-# Kept when updating an existing installation
-KEEP=".env .venv photos snapshots models app/static/vendor cf_ips.txt"
+# Kept when updating an existing installation (admin_login.lock: a locked admin login stays locked)
+KEEP=".env .venv photos snapshots models app/static/vendor cf_ips.txt admin_login.lock"
 # Not needed to run the server
 REMOVE="install_main_server.sh $SERVICE.service postgres __pycache__ venv .venv-build *.zip"
 
@@ -44,6 +47,33 @@ fi
 
 command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
 command -v tar >/dev/null 2>&1 || die "tar is required"
+
+# Tests on the installation run with administrator rights: its folders are only readable by the
+# in-time user (750), so a plain [ -e ... ] run as another user would see nothing.
+ptest() { $SUDO test "$@"; }
+
+# ------------------------------------------------------- existing installation
+EXISTING=no
+if ptest -f "$APP/main.py" || ptest -f "$APP/.env" || [ -f "$UNIT" ]; then
+    EXISTING=yes
+fi
+if [ -f "$UNIT" ]; then
+    UNIT_DIR="$(sed -n 's/^WorkingDirectory=//p' "$UNIT" | head -n 1)"
+    if [ -n "$UNIT_DIR" ] && [ "$UNIT_DIR" != "$APP" ]; then
+        die "the $SERVICE service runs from $UNIT_DIR, not $APP: this script only updates installations in $APP"
+    fi
+fi
+if [ "$EXISTING" = yes ]; then
+    ptest -f "$APP/.env" || die "an installation exists in $APP but has no .env: restore it (or remove $APP) first"
+    say "Existing in-Time main server found in $APP: it will be updated"
+    echo "    kept: .env (a backup is made first), photos, snapshots, face models, database"
+    echo "    updated: code and Python environment (.venv)"
+else
+    # another server already on port 8000 (e.g. a manual installation started by hand)
+    if command -v ss >/dev/null 2>&1 && ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq '(^|[:.])8000$'; then
+        warn "port 8000 is already in use on this machine: if it is another in-Time main server (manual installation), stop it, or set SERVER in .env to another port"
+    fi
+fi
 
 # ---------------------------------------------------------------- packages
 # apt can be locked by automatic updates (unattended-upgrades), often right after a server is
@@ -90,6 +120,8 @@ ask_yes_no() {  # $1 = question; returns 0 for yes
     done
 }
 
+PG_INSTALL=no
+if [ "$EXISTING" = no ] || [ "${IN_TIME_POSTGRES:-}" = install ]; then
 cat <<EOF
 
 The in-Time main server stores its data in PostgreSQL (version 12 or newer).
@@ -111,6 +143,7 @@ case "${IN_TIME_POSTGRES:-}" in
         ;;
     *) die "IN_TIME_POSTGRES must be 'existing' or 'install'" ;;
 esac
+fi  # new installation
 
 if [ "$PG_INSTALL" = yes ]; then
     if command -v apt-get >/dev/null 2>&1; then
@@ -149,7 +182,8 @@ fi
 
 # ---------------------------------------------------------------- download
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT INT TERM
+trap 'rm -rf "$TMP"' EXIT
+trap 'exit 130' INT TERM
 NEW="$TMP/main_server"
 
 if [ -n "${IN_TIME_SRC:-}" ]; then
@@ -214,30 +248,93 @@ fi
 $SUDO mkdir -p "$BASE"
 
 # --------------------------------------------------------- install / update
+run_as_user() {  # run a command as the service user
+    if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+        runuser -u "$SVC_USER" -- "$@"
+    else
+        sudo -u "$SVC_USER" "$@"
+    fi
+}
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+ENV_BACKUP=""
 WAS_ACTIVE=no
-if [ -d "$APP" ]; then
-    say "Updating $APP (keeping .env, photos, snapshots, models and the Python environment)"
+ROLLBACK=no   # yes from the moment the service is stopped until the new version is in place
+STAGE="$APP.new"  # new version prepared next to the installation (same disk: moves are instant)
+
+rollback() {
+    [ "$ROLLBACK" = yes ] || return 0
+    ROLLBACK=no
+    set +e
+    warn "update failed: putting the previous version back"
+    if ptest -d "$APP.old"; then
+        for src in "$APP" "$STAGE"; do
+            ptest -d "$src" || continue
+            # data moved into the new version goes back to the old one (.venv: its snapshot below)
+            for item in $KEEP; do
+                [ "$item" = .venv ] && continue
+                if ptest -e "$src/$item"; then
+                    $SUDO rm -rf "${APP:?}.old/$item"
+                    $SUDO mkdir -p "$APP.old/$(dirname "$item")"
+                    $SUDO mv "$src/$item" "$APP.old/$item"
+                fi
+            done
+            $SUDO rm -rf "$src"
+        done
+        if ptest -d "$BASE/venv.rollback"; then
+            $SUDO rm -rf "$APP.old/.venv"
+            $SUDO mv "$BASE/venv.rollback" "$APP.old/.venv"
+        fi
+        $SUDO mv "$APP.old" "$APP"
+    else
+        $SUDO rm -rf "$STAGE"
+    fi
+    if [ "$WAS_ACTIVE" = yes ]; then $SUDO systemctl start "$SERVICE"; fi
+    warn "the previous version is back in $APP (copy of .env: $ENV_BACKUP)"
+}
+# shellcheck disable=SC2154  # status is set inside the trap
+trap 'status=$?; rollback; rm -rf "$TMP"; exit $status' EXIT
+
+if [ "$EXISTING" = yes ]; then
+    ENV_BACKUP="$BASE/env-backup-$STAMP"
+    $SUDO cp -p "$APP/.env" "$ENV_BACKUP"
+    $SUDO chmod 600 "$ENV_BACKUP"
+    say "Saved a copy of .env: $ENV_BACKUP"
+
+    $SUDO rm -rf "$APP.old" "$STAGE" "$BASE/venv.rollback"
+    $SUDO mv "$NEW" "$STAGE"   # the new code only (data never goes through $TMP)
     if $SUDO systemctl is-active --quiet "$SERVICE"; then
         WAS_ACTIVE=yes
+        say "Stopping $SERVICE"
         $SUDO systemctl stop "$SERVICE"
     fi
+    ROLLBACK=yes
+    # left over by an earlier version of this script (new code moved inside the folder)
+    if ptest -f "$APP/main_server/main.py"; then $SUDO rm -rf "${APP:?}/main_server"; fi
+
+    say "Updating $APP"
+    $SUDO mv "$APP" "$APP.old"
+    # snapshot of the Python environment to roll back to (hard links: instant, no extra space;
+    # pip replaces files, it never writes into them)
+    if ptest -d "$APP.old/.venv"; then $SUDO cp -al "$APP.old/.venv" "$BASE/venv.rollback"; fi
     for item in $KEEP; do
-        if [ -e "$APP/$item" ]; then
-            $SUDO mkdir -p "$NEW/$(dirname "$item")"
-            $SUDO rm -rf "$NEW/$item"
-            $SUDO mv "$APP/$item" "$NEW/$item"
+        if ptest -e "$APP.old/$item"; then
+            $SUDO mkdir -p "$STAGE/$(dirname "$item")"
+            $SUDO rm -rf "${STAGE:?}/$item"
+            $SUDO mv "$APP.old/$item" "$STAGE/$item"
         fi
     done
-    $SUDO rm -rf "$APP.old"
-    $SUDO mv "$APP" "$APP.old"
+    $SUDO mv "$STAGE" "$APP"
 else
+    if ptest -e "$APP"; then  # an empty folder left over: anything else would be overwritten
+        $SUDO rmdir "$APP" 2>/dev/null || die "$APP exists but is not an in-Time installation (no main.py, no .env): move it away first"
+    fi
     say "Installing into $APP"
+    $SUDO mv "$NEW" "$APP"
 fi
-$SUDO mv "$NEW" "$APP"
-$SUDO rm -rf "$APP.old"
 
 FIRST_ENV=no
-if [ ! -f "$APP/.env" ]; then
+if ! ptest -f "$APP/.env"; then
     FIRST_ENV=yes
     $SUDO cp "$APP/.env.example" "$APP/.env"
     # a random session key and admin password instead of the placeholders (the server refuses them)
@@ -280,20 +377,28 @@ $SUDO chmod 750 "$BASE" "$APP"
 $SUDO chmod 600 "$APP/.env"
 
 # ---------------------------------------------------------- python packages
-run_as_user() {  # run a command as the service user
-    if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
-        runuser -u "$SVC_USER" -- "$@"
+# The environment is rebuilt when it is missing, broken or made with another Python version
+# (e.g. after a system upgrade); otherwise it is updated in place.
+PY_VER="$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+VENV_VER="$(run_as_user "$APP/.venv/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+if [ -z "$VENV_VER" ] || [ "$VENV_VER" != "$PY_VER" ]; then
+    if ptest -d "$APP/.venv"; then
+        say "Rebuilding the Python environment (Python ${VENV_VER:-unusable} -> $PY_VER)"
+        $SUDO rm -rf "$APP/.venv"
     else
-        sudo -u "$SVC_USER" "$@"
+        say "Creating the Python environment"
     fi
-}
-if [ ! -x "$APP/.venv/bin/python" ]; then
-    say "Creating the Python environment"
     run_as_user "$PYTHON" -m venv "$APP/.venv"
 fi
-say "Installing dependencies (this can take a few minutes)"
+say "Updating dependencies in .venv (this can take a few minutes)"
 run_as_user env HOME="$BASE" "$APP/.venv/bin/pip" install -q --upgrade pip
-run_as_user env HOME="$BASE" "$APP/.venv/bin/pip" install -q -r "$APP/requirements.txt"
+run_as_user env HOME="$BASE" "$APP/.venv/bin/pip" install -q --upgrade -r "$APP/requirements.txt"
+run_as_user "$APP/.venv/bin/python" -c 'import flask, flask_sqlalchemy, psycopg, cryptography, cv2, numpy' \
+    || die "the Python environment is incomplete after the update"
+
+# the new version is in place: the previous one is no longer needed
+ROLLBACK=no
+$SUDO rm -rf "$APP.old" "$BASE/venv.rollback"
 
 # ------------------------------------------------------------------ systemd
 say "Installing the $SERVICE service"
@@ -334,6 +439,7 @@ if [ "$WAS_ACTIVE" = yes ]; then
     say "Restarting $SERVICE"
     $SUDO systemctl start "$SERVICE"
 fi
+trap 'rm -rf "$TMP"' EXIT
 
 cat <<EOF
 
@@ -362,10 +468,10 @@ $DB_NOTE
        sudo systemctl start $SERVICE
 EOF
 elif [ "$WAS_ACTIVE" = yes ]; then
-    echo "Updated and restarted. Your .env was kept (compare it with .env.example for new settings)."
+    echo "Updated and restarted. Your .env was kept (copy: $ENV_BACKUP); compare it with .env.example for new settings."
 else
     cat <<EOF
-Updated. Your .env was kept (compare it with .env.example for new settings).
+Updated. Your .env was kept (copy: $ENV_BACKUP); compare it with .env.example for new settings.
 Check the configuration if needed (sudo nano $APP/.env), then start the server:
 $DB_NOTE
   sudo systemctl start $SERVICE

@@ -179,7 +179,11 @@ and `data/models/` (relay) from another installation.
 curl -sSL https://raw.githubusercontent.com/dijey099/in-Time/refs/heads/master/main_server/install_main_server.sh | sh
 ```
 
-The script generates `SECRET_KEY` and a random admin password (printed at the end). Set `IN_TIME_BRANCH`
+The script generates `SECRET_KEY` and a random admin password (printed at the end). **Run it again to
+update:** it detects the existing installation first (no PostgreSQL question), saves `.env` to
+`/var/lib/in-time/env-backup-<date>`, replaces the code, keeps `.env`, photos, snapshots, models and the
+admin login lock, updates `.venv` (rebuilt if broken or made with another Python version) and restarts the
+service. If the update fails, the previous version is put back. Set `IN_TIME_BRANCH`
 to a release tag and `IN_TIME_SHA256` to its archive checksum to install a verified version.
 
 **Manually:**
