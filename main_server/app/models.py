@@ -97,6 +97,15 @@ class Relay(db.Model):
     # were deleted on the relay before they reached this server (flagged "gap").
     last_seq = db.Column(db.Integer)
     seq_key = db.Column(db.String(64))
+    # Site area picked on a map (circle: centre + radius in metres). A check-in whose GPS location is
+    # outside it is still accepted but flagged "outside" on the dashboard. Empty: no area check.
+    area_lat = db.Column(db.Float)
+    area_lng = db.Column(db.Float)
+    area_radius = db.Column(db.Float)
+
+    @property
+    def has_area(self):
+        return self.area_lat is not None and self.area_lng is not None and bool(self.area_radius)
 
     @staticmethod
     def new_token() -> str:
@@ -158,6 +167,14 @@ class Checkin(db.Model):
     relay_status = db.Column(db.String(2))
     # Sequence number given by the relay (signed with the check-in)
     relay_seq = db.Column(db.Integer)
+    # GPS location of the phone when the check-in was made (signed by the relay)
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    location_accuracy = db.Column(db.Float)  # metres, as reported by the phone
+    # Location vs the relay's area when received: "inside" / "outside" / "no_location" (relay has an
+    # area but sent no location: older relay version). None = the relay had no area set.
+    area_check = db.Column(db.String(12), index=True)
+    area_distance = db.Column(db.Float)  # metres from the area's centre
 
     FLAGGED = ("mismatch", "no_face", "no_snapshot", "replay")
     TIME_FLAGGED = ("delayed", "gap")
@@ -178,6 +195,18 @@ class Checkin(db.Model):
         """Time as seen on the site (its time zone); server time zone if unknown."""
         tz = tz_from_name(self.timezone)
         return self.timestamp.astimezone(tz) if tz else self.timestamp.astimezone()
+
+    @property
+    def outside_area(self):
+        return self.area_check == "outside"
+
+    @property
+    def area_excess(self):
+        """Metres beyond the edge of the relay's area (for display)."""
+        r = self.relay
+        if self.area_distance is None or not r or not r.area_radius:
+            return None
+        return max(0.0, self.area_distance - r.area_radius)
 
     @property
     def relay_label(self):

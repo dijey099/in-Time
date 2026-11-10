@@ -28,11 +28,22 @@ def _csrf():
     csrf_protect()
 
 
+@admin_bp.app_template_filter("km")
+def _km(metres):
+    """Distance for display: "85 m", "1.2 km"."""
+    if metres is None:
+        return ""
+    return f"{metres:.0f} m" if metres < 1000 else f"{metres / 1000:.1f} km"
+
+
 @admin_bp.app_context_processor
 def _inject():
     models = current_app.extensions.get("face_models")
     return {"csrf_token": csrf_token, "face_models": models, "face_engine": current_app.extensions.get("face_engine"),
-            "source_url": current_app.config.get("SOURCE_URL")}
+            "source_url": current_app.config.get("SOURCE_URL"),
+            "map_config": {"tiles": current_app.config.get("MAP_TILE_URL"),
+                           "attribution": current_app.config.get("MAP_TILE_ATTRIBUTION"),
+                           "search": current_app.config.get("MAP_SEARCH_URL")}}
 
 
 # ---------------------------------------------------------------------- login
@@ -89,10 +100,13 @@ def dashboard():
         "today": len(today),
         "late": sum(1 for c in today if c.status == "KO"),
         "flagged": sum(1 for c in today if c.flagged),
+        "outside": sum(1 for c in today if c.outside_area),
     }
+    outside = [c for c in today if c.outside_area][:10]
     relays = Relay.query.order_by(Relay.name).all()
     return render_template("dashboard.html", checkins=today[:50], stats=stats, relays=relays,
-                           now=datetime.now(timezone.utc))
+                           outside=outside, now=datetime.now(timezone.utc),
+                           relays_without_area=[r for r in relays if r.enabled and not r.has_area])
 
 
 # ---------------------------------------------------------------------- users
@@ -255,7 +269,32 @@ def snapshot(name):
 
 
 # --------------------------------------------------------------------- relays
-def _validate_relay_form(relay: Relay):
+AREA_MIN_RADIUS, AREA_MAX_RADIUS = 10, 50000  # metres
+
+
+def _validate_area(relay: Relay, required: bool):
+    """Site area from the map picker (hidden fields area_lat / area_lng / area_radius)."""
+    if "area_lat" not in request.form and not required:
+        return  # form without the map: keep the current area
+    raw = [request.form.get(k, "").strip() for k in ("area_lat", "area_lng", "area_radius")]
+    if not any(raw):
+        if required:
+            raise ValueError("Pick the site area on the map: click the site's location, then set the radius")
+        relay.area_lat = relay.area_lng = relay.area_radius = None
+        return
+    try:
+        lat, lng, radius = (float(v) for v in raw)
+    except ValueError:
+        raise ValueError("Invalid site area: pick it again on the map") from None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise ValueError("Invalid site area: pick it again on the map")
+    if not (AREA_MIN_RADIUS <= radius <= AREA_MAX_RADIUS):
+        raise ValueError(f"Area radius must be between {AREA_MIN_RADIUS} m and {AREA_MAX_RADIUS // 1000} km")
+    relay.area_lat, relay.area_lng, relay.area_radius = round(lat, 6), round(lng, 6), round(radius)
+
+
+def _validate_relay_form(relay: Relay, new=False):
+    _validate_area(relay, required=new)
     relay.name = request.form.get("name", "").strip() or relay.name
     if not relay.name:
         raise ValueError("Name is required")
@@ -283,7 +322,7 @@ def relays():
         token = Relay.new_token()
         relay = Relay(token_hash=hash_token(token))
         try:
-            _validate_relay_form(relay)
+            _validate_relay_form(relay, new=True)
             if Relay.query.filter_by(name=relay.name).first():
                 raise ValueError("A relay with this name already exists")
             db.session.add(relay)
@@ -294,8 +333,11 @@ def relays():
             db.session.rollback()
             flash(str(exc), "error")
     new_token = session.pop("new_token", None)
-    return render_template("relays.html", relays=Relay.query.order_by(Relay.name).all(),
-                           new_token=new_token, now=datetime.now(timezone.utc))
+    relays = Relay.query.order_by(Relay.name).all()
+    with_area = next((r for r in relays if r.has_area), None)
+    return render_template("relays.html", relays=relays, new_token=new_token, now=datetime.now(timezone.utc),
+                           form=request.form, area_limits=(AREA_MIN_RADIUS, AREA_MAX_RADIUS),
+                           area_fallback={"lat": with_area.area_lat, "lng": with_area.area_lng} if with_area else None)
 
 
 @admin_bp.post("/relays/<int:relay_id>/edit")
@@ -392,6 +434,8 @@ def _filtered_checkins():
     elif args.get("face") == "unchecked":
         query = query.filter((Checkin.verify_status.is_(None))
                              | (Checkin.verify_status.in_(("no_reference", "legacy"))))
+    if args.get("area") in ("outside", "inside", "no_location"):
+        query = query.filter(Checkin.area_check == args["area"])
     return query.order_by(Checkin.timestamp.desc()), d_from, d_to
 
 
@@ -416,13 +460,18 @@ def checkins_csv():
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["timestamp", "timezone", "user_id", "full_name", "relay", "direction", "status", "reason",
-                "distance", "face_check", "face_similarity", "time_check"])
+                "distance", "face_check", "face_similarity", "time_check", "latitude", "longitude",
+                "location_accuracy_m", "area_check", "distance_from_site_m"])
     for c in query.all():
         w.writerow([_csv_cell(v) for v in (
             c.local_timestamp.strftime("%d/%m/%Y %H:%M:%S"), c.timezone or "", c.user_id, c.user.full_name,
             c.relay_label, c.direction, c.status, c.reason or "",
             f"{c.distance:.3f}" if c.distance is not None else "",
             c.verify_status or "pending", f"{c.verify_score:.3f}" if c.verify_score is not None else "",
-            c.time_check or "ok")])
+            c.time_check or "ok",
+            f"{c.latitude:.6f}" if c.latitude is not None else "",
+            f"{c.longitude:.6f}" if c.longitude is not None else "",
+            f"{c.location_accuracy:.0f}" if c.location_accuracy is not None else "",
+            c.area_check or "", f"{c.area_distance:.0f}" if c.area_distance is not None else "")])
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename=checkins_{d_from:%d-%m-%Y}_{d_to:%d-%m-%Y}.csv"})

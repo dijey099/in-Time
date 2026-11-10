@@ -80,6 +80,15 @@ class Config:
     # Link to the source code shown in the admin console (AGPL-3.0, section 13). If you run a modified
     # version, point it to your own published source.
     SOURCE_URL = os.environ.get("SOURCE_URL", "https://github.com/dijey099/in-Time").strip()
+    # Map of the relay site area picker (admin console). Default: OpenStreetMap's volunteer-run tile
+    # servers, fine for a few admins (https://operations.osmfoundation.org/policies/tiles/). For more
+    # use, point it to another provider (e.g. https://{s}.tile.example.com/{z}/{x}/{y}.png?key=...).
+    MAP_TILE_URL = os.environ.get("MAP_TILE_URL", "https://tile.openstreetmap.org/{z}/{x}/{y}.png").strip()
+    MAP_TILE_ATTRIBUTION = os.environ.get(
+        "MAP_TILE_ATTRIBUTION",
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors').strip()
+    # Address search on the map (Nominatim API). Empty: no search box, the site is clicked on the map.
+    MAP_SEARCH_URL = os.environ.get("MAP_SEARCH_URL", "https://nominatim.openstreetmap.org/search").strip()
 
     # Departments a user can belong to (comma separated in .env), e.g. Sales,Direction,Manager
     DEPARTMENTS = list(dict.fromkeys(d.strip() for d in os.environ.get("DEPARTMENTS", "").split(",") if d.strip()))

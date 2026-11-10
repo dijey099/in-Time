@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Relays{% endblock %}
 {% block content %}
-<h1>Relay servers</h1>
+<div class="row">
+  <h1>Relay servers</h1>
+  <button type="button" class="icon-text" id="relay-new">
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>
+    New relay</button>
+</div>
 
 {% if new_token %}
 <div class="flash token token-line">
@@ -10,62 +15,205 @@
 </div>
 {% endif %}
 
-<table>
-  <thead><tr><th>Name</th><th>Allowed IPs</th><th>Time zone</th><th>Max in</th><th>Min out</th><th class="center">Enabled</th><th class="center">Local</th><th></th><th>Last seen</th><th></th></tr></thead>
+{% macro icon(name) -%}
+<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+{%- if name == 'edit' %}<path d="M12.5 4.5l3 3L7 16H4v-3l8.5-8.5zM11 6l3 3"/>
+{%- elif name == 'key' %}<circle cx="6.5" cy="13.5" r="3.5"/><path d="M9 11l7-7M13.5 6.5l2 2M11.5 8.5l1.5 1.5"/>
+{%- elif name == 'trash' %}<path d="M3.5 5.5h13M8 5.5V3.5h4v2M5 5.5l.8 11h8.4l.8-11M8.3 8.5v5.5M11.7 8.5v5.5"/>
+{%- elif name == 'pin' %}<path d="M10 18s5.5-5.2 5.5-9.5a5.5 5.5 0 10-11 0C4.5 12.8 10 18 10 18z"/><circle cx="10" cy="8.5" r="2"/>
+{%- elif name == 'lock' %}<rect x="4.5" y="9" width="11" height="8" rx="1.5"/><path d="M7 9V6.5a3 3 0 016 0V9"/>
+{%- endif %}</svg>
+{%- endmacro %}
+
+<table class="relays-table">
+  <thead><tr><th>Relay</th><th>Allowed IPs</th><th>Time zone</th><th>Last seen</th><th class="right">Actions</th></tr></thead>
   <tbody>
   {% for r in relays %}
-    {% set fid = 'relay-' ~ r.id %}
+    {% set online = r.last_seen and (now - r.last_seen).total_seconds() < 180 %}
     <tr class="relay-row">
-      <td><input form="{{ fid }}" name="name" value="{{ r.name }}" required aria-label="Name"></td>
-      <td><input form="{{ fid }}" name="allowed_ips" value="{{ r.allowed_ips }}" title="IPs or CIDR, comma separated. * = any" required aria-label="Allowed IPs"></td>
-      <td><input form="{{ fid }}" name="timezone" value="{{ r.timezone or '' }}" size="14" placeholder="from 1st check-in" title="Site time zone (IANA name, e.g. Indian/Antananarivo). Late/early is computed in this zone. Empty: taken from the relay's first check-in." aria-label="Time zone"></td>
-      <td><input form="{{ fid }}" name="max_in_time" type="time" value="{{ r.max_in_time or '' }}" title="Empty = global setting" aria-label="Max in time"></td>
-      <td><input form="{{ fid }}" name="min_out_time" type="time" value="{{ r.min_out_time or '' }}" title="Empty = global setting" aria-label="Min out time"></td>
-      <td class="center"><input form="{{ fid }}" type="checkbox" name="enabled" {{ 'checked' if r.enabled }} aria-label="Enabled"></td>
-      <td class="center"><input form="{{ fid }}" type="checkbox" name="local_relay" {{ 'checked' if r.local_relay }} aria-label="Local relay"></td>
       <td>
-        <form id="{{ fid }}" method="post" action="{{ url_for('admin.relay_edit', relay_id=r.id) }}">
-          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-          <button>Save</button>
-        </form>
+        <b>{{ r.name }}</b>
+        {%- if not r.enabled %} <span class="pill">disabled</span>{% endif %}
+        {%- if r.local_relay %} <span class="pill local" title="Local relay: direct connection, proxy settings bypassed">local</span>{% endif %}
+        {%- if not r.has_area %} <span class="pill warn" title="No site area: check-in locations are recorded but not checked">no area</span>{% endif %}
       </td>
-      <td class="nowrap">{{ r.last_seen.astimezone().strftime('%d/%m/%Y %H:%M') if r.last_seen else 'never' }}<br><small class="muted">{{ r.last_ip or '' }}{% if r.instance_id %} · <span title="This token is locked to one relay server. Generate a new token to move it to a replacement relay.">locked</span>{% endif %}</small></td>
-      <td class="actions">
-        <form method="post" action="{{ url_for('admin.relay_token', relay_id=r.id) }}" onsubmit="return confirm('Generate a new token? The old one stops working immediately.')">
-          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link">New token</button>
-        </form>
+      <td class="ips">{{ r.allowed_ips }}</td>
+      <td>{% if r.timezone %}{{ r.timezone }}{% else %}<span class="muted" title="Taken from the relay's first check-in">not set yet</span>{% endif %}</td>
+      <td class="nowrap">
+        {%- if not r.enabled %}<span class="dot off" title="Disabled"></span>{% elif online %}<span class="dot on" title="Online"></span>{% else %}<span class="dot ko" title="Offline"></span>{% endif %}
+        {{ r.last_seen.astimezone().strftime('%d/%m/%Y %H:%M') if r.last_seen else 'never' }}
+        {%- if r.last_ip or r.instance_id %}<br><small class="muted">{{ r.last_ip or '' }}
+          {%- if r.instance_id %} <span class="inline-icon" title="This token is locked to one relay server. Generate a new token (Edit) to move it to a replacement relay." aria-label="Token locked">{{ icon('lock') }}</span>{% endif %}</small>{% endif %}
+      </td>
+      <td class="row-actions">
+        <button type="button" class="icon-btn relay-edit" title="Edit {{ r.name }}" aria-label="Edit {{ r.name }}"
+                data-relay='{{ {"name": r.name, "allowed_ips": r.allowed_ips, "timezone": r.timezone or "",
+                                 "max_in_time": r.max_in_time or "", "min_out_time": r.min_out_time or "",
+                                 "enabled": r.enabled, "local_relay": r.local_relay, "locked": r.instance_id is not none,
+                                 "area_lat": r.area_lat, "area_lng": r.area_lng, "area_radius": r.area_radius,
+                                 "edit_url": url_for("admin.relay_edit", relay_id=r.id),
+                                 "token_url": url_for("admin.relay_token", relay_id=r.id)}|tojson }}'>{{ icon('edit') }}</button>
         <form method="post" action="{{ url_for('admin.relay_delete', relay_id=r.id) }}" onsubmit="return confirm('Delete {{ r.name }}?')">
-          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Delete</button>
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <button class="icon-btn danger" title="Delete {{ r.name }} (disabled instead if it has check-ins)" aria-label="Delete {{ r.name }}">{{ icon('trash') }}</button>
         </form>
       </td>
     </tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No relay yet: click <b>New relay</b> to add one.</td></tr>
   {% endfor %}
   </tbody>
 </table>
-<p class="muted">Leave <b>Max in</b> / <b>Min out</b> empty to use the global values from Settings.
+<p class="muted">Click <b>Edit</b> to change a relay's settings, site area or token.
 A token is locked to the first relay server that uses it (its machine ID and signing key): generate a new token to move it to another computer.</p>
 
-<h2>Add a relay</h2>
-<form method="post" class="card">
-  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-  <label>Name <input name="name" required placeholder="SITE A"></label>
-  <label>Allowed IPs <input name="allowed_ips" required placeholder="203.0.113.10, 198.51.100.0/24"></label>
-  <p class="muted">Public IP(s) the relay reaches this server from. Use * only for testing.</p>
-  <label>Time zone (optional) <input name="timezone" placeholder="Indian/Antananarivo"></label>
-  <p class="muted">Late/early is computed in this zone. Empty: taken from the relay's first check-in.</p>
-  <div class="row">
-    <label>Max in time (optional) <input name="max_in_time" type="time"></label>
-    <label>Min out time (optional) <input name="min_out_time" type="time"></label>
-  </div>
-  <div class="check-row">
-    <label class="check"><input type="checkbox" name="local_relay"> Local relay</label>
-    <span class="hint" tabindex="0" role="img" aria-label="This relay server is on the local network and can connect directly to the Main server without a reverse proxy." data-tip="This relay server is on the local network and can connect directly to the Main server without a reverse proxy."><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor"/><rect x="9" y="8.5" width="2" height="6" rx="1" fill="#fff"/><circle cx="10" cy="5.8" r="1.2" fill="#fff"/></svg></span>
-  </div>
-  <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
-  <button>Create relay</button>
-</form>
+<dialog id="new-dialog" class="area-dialog relay-dialog" aria-labelledby="new-dialog-title">
+  <form method="post" id="new-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <h2 id="new-dialog-title">New relay</h2>
+    <div class="dialog-body">
+      <div class="dialog-grid">
+        <label>Name <input name="name" required placeholder="SITE A" value="{{ form.get('name', '') }}"></label>
+        <label>Allowed IPs <input name="allowed_ips" required placeholder="203.0.113.10, 198.51.100.0/24" value="{{ form.get('allowed_ips', '') }}" title="Public IP(s) the relay reaches this server from, comma separated. * = any (testing only)"></label>
+        <label>Time zone (optional) <input name="timezone" placeholder="Indian/Antananarivo" value="{{ form.get('timezone', '') }}" title="Late/early is computed in this zone. Empty: taken from the relay's first check-in."></label>
+        <div class="row tight">
+          <label>Max in time <input name="max_in_time" type="time" value="{{ form.get('max_in_time', '') }}" title="Empty = global setting"></label>
+          <label>Min out time <input name="min_out_time" type="time" value="{{ form.get('min_out_time', '') }}" title="Empty = global setting"></label>
+        </div>
+      </div>
+      <p class="muted small">Allowed IPs: public IP(s) the relay reaches this server from (* only for testing). Empty times use the global values from Settings.</p>
+      <div class="check-row">
+        <label class="check"><input type="checkbox" name="enabled" {{ 'checked' if not form or form.get('enabled') }}> Enabled</label>
+        <label class="check"><input type="checkbox" name="local_relay" {{ 'checked' if form.get('local_relay') }}> Local relay</label>
+        <span class="hint" tabindex="0" role="img" aria-label="This relay server is on the local network and can connect directly to the Main server without a reverse proxy." data-tip="This relay server is on the local network and can connect directly to the Main server without a reverse proxy."><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor"/><rect x="9" y="8.5" width="2" height="6" rx="1" fill="#fff"/><circle cx="10" cy="5.8" r="1.2" fill="#fff"/></svg></span>
+      </div>
+      <fieldset class="area-field">
+        <legend>Site area (required)</legend>
+        <p class="muted small">Search for the site or click its location on the map, then set the radius. Check-ins made outside this area get a warning on the dashboard (they are still recorded).</p>
+        <div class="area-picker" id="new-area" data-lat="{{ form.get('area_lat', '') }}" data-lng="{{ form.get('area_lng', '') }}" data-radius="{{ form.get('area_radius', '') }}"></div>
+        <input type="hidden" name="area_lat" value="{{ form.get('area_lat', '') }}">
+        <input type="hidden" name="area_lng" value="{{ form.get('area_lng', '') }}">
+        <input type="hidden" name="area_radius" value="{{ form.get('area_radius', '') }}">
+      </fieldset>
+    </div>
+    <div class="dialog-actions">
+      <span class="spacer"></span>
+      <button type="button" class="secondary" id="new-cancel">Cancel</button>
+      <button type="submit">Create relay</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="relay-dialog" class="area-dialog relay-dialog" aria-labelledby="relay-dialog-title">
+  <form method="post" id="relay-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <h2 id="relay-dialog-title">Edit relay</h2>
+    <div class="dialog-body">
+      <div class="dialog-grid">
+        <label>Name <input name="name" required></label>
+        <label>Allowed IPs <input name="allowed_ips" required title="IPs or CIDR, comma separated. * = any"></label>
+        <label>Time zone <input name="timezone" placeholder="from the 1st check-in" title="IANA name, e.g. Indian/Antananarivo. Late/early is computed in this zone."></label>
+        <div class="row tight">
+          <label>Max in time <input name="max_in_time" type="time" title="Empty = global setting"></label>
+          <label>Min out time <input name="min_out_time" type="time" title="Empty = global setting"></label>
+        </div>
+      </div>
+      <p class="muted small">Empty max in / min out times use the global values from Settings.</p>
+      <div class="check-row">
+        <label class="check"><input type="checkbox" name="enabled"> Enabled</label>
+        <label class="check"><input type="checkbox" name="local_relay"> Local relay</label>
+        <span class="hint" tabindex="0" role="img" aria-label="This relay server is on the local network and can connect directly to the Main server without a reverse proxy." data-tip="This relay server is on the local network and can connect directly to the Main server without a reverse proxy."><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor"/><rect x="9" y="8.5" width="2" height="6" rx="1" fill="#fff"/><circle cx="10" cy="5.8" r="1.2" fill="#fff"/></svg></span>
+      </div>
+
+      <fieldset class="area-field">
+        <legend>Site area</legend>
+        <p class="muted small">Check-ins made outside this area get a warning on the dashboard (they are still recorded).
+          <button type="button" class="link danger" id="area-remove">Remove area</button></p>
+        <div class="area-picker" id="edit-area"></div>
+        <input type="hidden" name="area_lat"><input type="hidden" name="area_lng"><input type="hidden" name="area_radius">
+      </fieldset>
+
+      <fieldset class="area-field">
+        <legend>Token</legend>
+        <div class="token-row">
+          <span class="muted small" id="token-state"></span>
+          <button type="submit" class="secondary icon-text" id="token-new" formnovalidate title="The old token stops working immediately">{{ icon('key') }} Generate new token</button>
+        </div>
+      </fieldset>
+    </div>
+    <div class="dialog-actions">
+      <span class="spacer"></span>
+      <button type="button" class="secondary" id="relay-cancel">Cancel</button>
+      <button type="submit" id="relay-save">Save</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}
 {% block scripts %}
+<link rel="stylesheet" href="{{ url_for('static', filename='leaflet/leaflet.css') }}">
+<script src="{{ url_for('static', filename='leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='area_picker.js') }}"></script>
+<script>
+(() => {
+  const limits = {min: {{ area_limits[0] }}, max: {{ area_limits[1] }}};
+  // where to open the map when no area is set yet: another relay's area, if any
+  const fallback = {{ area_fallback|tojson }};
+  window.AREA_MAP = {{ map_config|tojson }};  // tile server and address search (MAP_* in .env)
+
+  // "New relay" pop-up: the area is required
+  const field = (form, name) => form.querySelector(`input[name="${name}"]`);
+  const newDialog = document.getElementById('new-dialog'), createForm = document.getElementById('new-form');
+  const newPicker = AreaPicker(document.getElementById('new-area'), {limits, fallback, onChange: (a) => {
+    field(createForm, 'area_lat').value = a ? a.lat.toFixed(6) : '';
+    field(createForm, 'area_lng').value = a ? a.lng.toFixed(6) : '';
+    field(createForm, 'area_radius').value = a ? Math.round(a.radius) : '';
+  }});
+  const openNew = () => {
+    newDialog.showModal();
+    const lat = parseFloat(field(createForm, 'area_lat').value), lng = parseFloat(field(createForm, 'area_lng').value);
+    newPicker.set(isNaN(lat) || isNaN(lng) ? null : {lat, lng, radius: parseFloat(field(createForm, 'area_radius').value)});
+  };
+  document.getElementById('relay-new').onclick = openNew;
+  document.getElementById('new-cancel').onclick = () => newDialog.close();
+  createForm.addEventListener('submit', (ev) => {
+    if (!field(createForm, 'area_lat').value) {
+      ev.preventDefault();
+      newPicker.setError('Pick the site area on the map before creating the relay.');
+      document.getElementById('new-area').scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+  });
+  {% if form %}openNew();  // creation refused: show the form again with what was typed{% endif %}
+
+  // existing relays: every field in a pop-up
+  const dialog = document.getElementById('relay-dialog'), form = document.getElementById('relay-form');
+  const editPicker = AreaPicker(document.getElementById('edit-area'), {limits, fallback, onChange: (a) => {
+    field(form, 'area_lat').value = a ? a.lat.toFixed(6) : '';
+    field(form, 'area_lng').value = a ? a.lng.toFixed(6) : '';
+    field(form, 'area_radius').value = a ? Math.round(a.radius) : '';
+  }});
+  document.querySelectorAll('.relay-edit').forEach((btn) => {
+    btn.onclick = () => {
+      const r = JSON.parse(btn.dataset.relay);
+      form.action = r.edit_url;
+      document.getElementById('token-new').setAttribute('formaction', r.token_url);
+      document.getElementById('relay-dialog-title').textContent = `Edit relay · ${r.name}`;
+      for (const k of ['name', 'allowed_ips', 'timezone', 'max_in_time', 'min_out_time']) field(form, k).value = r[k];
+      field(form, 'enabled').checked = r.enabled;
+      field(form, 'local_relay').checked = r.local_relay;
+      document.getElementById('token-state').textContent = r.locked
+        ? 'This token is locked to one relay server. Generate a new one to move the relay to another computer.'
+        : 'The token is not used by a relay server yet.';
+      dialog.showModal();
+      editPicker.set(r.area_lat === null ? null : {lat: r.area_lat, lng: r.area_lng, radius: r.area_radius});
+    };
+  });
+  document.getElementById('area-remove').onclick = () => editPicker.set(null);
+  document.getElementById('token-new').onclick = (ev) => {
+    if (!confirm('Generate a new token? The old one stops working immediately (other changes in this window are not saved).')) ev.preventDefault();
+  };
+  document.getElementById('relay-cancel').onclick = () => dialog.close();
+})();
+</script>
 {% if new_token %}
 <script>
 document.getElementById('copy-token').onclick = async (ev) => {

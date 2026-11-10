@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDateEdit, QFrame, QHBoxLayout
                                QWidget)
 
 from .config import bundle_dir
+from .public_ip import PublicIP
 from .sync import ERROR, REACHABLE, UNREACHABLE
 
 # Palette from the in-Time logo. Accents only: backgrounds and text follow the system theme.
@@ -20,7 +21,7 @@ INDIGO_LIGHT = "#7C5CFF"  # lighter tint of the logo indigo #2E14A0, readable on
 LOGO_PATH = bundle_dir() / "relay" / "assets" / "logo.png"  # bundled with --add-data in builds
 
 STATUS_COLORS = {REACHABLE: "#16a34a", UNREACHABLE: "#d97706", ERROR: "#dc2626"}
-SYNC_COLORS = {"synced": BRAND_SKY, "pending": "#9ca3af", "rejected": "#dc2626"}
+SYNC_COLORS = {"synced": BRAND_SKY, "not_synced": "#9ca3af"}  # blue cloud / grey cloud, no text
 
 PRIMARY_BUTTON_QSS = f"""
 QPushButton#primary {{
@@ -73,24 +74,22 @@ def qr_pixmap(text: str, size: int = 150) -> QPixmap:
     return pm
 
 
-def cloud_icon(color: str, crossed=False) -> QIcon:
-    """Small cloud icon: blue = synced with Main server, grey = waiting, red = rejected."""
-    pm = QPixmap(28, 20)
+def cloud_pixmap(color: str, ratio: float = 1.0) -> QPixmap:
+    """Small cloud: blue = synced with Main server, grey = not synced (yet)."""
+    pm = QPixmap(round(28 * ratio), round(20 * ratio))
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
+    p.scale(ratio, ratio)
     p.setPen(Qt.NoPen)
     p.setBrush(QColor(color))
     p.drawEllipse(QRectF(2, 8, 10, 10))
     p.drawEllipse(QRectF(7, 3, 12, 12))
     p.drawEllipse(QRectF(15, 7, 11, 11))
     p.drawRect(QRectF(7, 12, 14, 6))
-    if crossed:
-        p.setPen(QColor("white"))
-        p.drawLine(10, 8, 18, 16)
-        p.drawLine(18, 8, 10, 16)
     p.end()
-    return QIcon(pm)
+    pm.setDevicePixelRatio(ratio)
+    return pm
 
 
 class MainWindow(QMainWindow):
@@ -145,7 +144,6 @@ class MainWindow(QMainWindow):
         cf.setPointSize(18)
         cf.setBold(True)
         self.clock_label.setFont(cf)
-        self.clock_label.setToolTip("Trusted time (from the internet), not the PC clock")
         left.addLayout(title_row)
 
         net_row = QHBoxLayout()
@@ -196,9 +194,16 @@ class MainWindow(QMainWindow):
                      "<br>".join(f"<span style='font-size:14pt'>{u}</span>" for u in phone_urls) +
                      "<br><small>Accept the certificate warning the first time.</small>")
         txt.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        right = QVBoxLayout()  # clock on top of the "Scan the code" text
+        # public IP of this relay (ifconfig.me): the address to allow on the main server
+        self.public_ip = PublicIP()
+        self.public_ip.start()
+        self._shown_ip = object()
+        self.ip_label = QLabel()
+        self.ip_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        right = QVBoxLayout()  # clock on top of the "Scan the code" text, public IP below
         right.addWidget(self.clock_label)
         right.addWidget(txt)
+        right.addWidget(self.ip_label)
         right.addStretch(1)
         pl.addLayout(right)
         header.addWidget(phone_box)
@@ -302,9 +307,21 @@ class MainWindow(QMainWindow):
                                                          Qt.SmoothTransformation)) if not pm.isNull() else QIcon()
         return self._photo_cache[user_id]
 
+    def _refresh_public_ip(self):
+        ip, err = self.public_ip.value, self.public_ip.error
+        if (ip, err) == self._shown_ip:
+            return
+        self._shown_ip = (ip, err)
+        if ip:
+            stale = f" <small style='color:#d97706'>(last known: {html.escape(err)})</small>" if err else ""
+            self.ip_label.setText(f"Public IP: <b style='font-size:13pt'>{html.escape(ip)}</b>{stale}")
+        else:
+            self.ip_label.setText(f"Public IP: <span style='color:#6b7280'>{'not available: ' + html.escape(err) if err else 'checking…'}</span>")
+
     def refresh(self, force=False):
         self._clock_warnings = []
         self._refresh_clock()
+        self._refresh_public_ip()
         st = self.sync.state.snapshot()
         color = STATUS_COLORS.get(st["status"], "#9ca3af")
         self.status_dot.setStyleSheet(f"background:{color}; border-radius:8px;")
@@ -356,9 +373,7 @@ class MainWindow(QMainWindow):
                 QTableWidgetItem(r["relay_name"] or "—"),
                 QTableWidgetItem(r["direction"]),
                 QTableWidgetItem(r["status"] + (f" ({r['reason']})" if r["reason"] else "")),
-                QTableWidgetItem(cloud_icon(SYNC_COLORS[r["sync_state"]], r["sync_state"] == "rejected"),
-                                 {"synced": "Synced", "pending": "Not synced",
-                                  "rejected": "Rejected"}[r["sync_state"]]),
+                QTableWidgetItem(),  # sync cloud (cell widget below)
             ]
             st_item, dir_item, sync_item = items[7], items[6], items[8]
             st_item.setForeground(QColor("#16a34a" if r["status"] == "OK" else "#dc2626"))
@@ -366,9 +381,21 @@ class MainWindow(QMainWindow):
             f.setBold(True)
             st_item.setFont(f)
             dir_item.setForeground(QColor(BRAND_SKY if r["direction"] == "IN" else INDIGO_LIGHT))
-            if r["sync_state"] == "rejected":
-                sync_item.setToolTip(r["sync_error"] or "")
-            elif r["synced_at"]:
-                sync_item.setToolTip(f"Synced at {r['synced_at']}")
+            # Main server column: a centred cloud only, blue = synced, grey = not synced
+            synced = r["sync_state"] == "synced"
+            if synced:
+                tip = f"Synced with the Main server at {r['synced_at']}" if r["synced_at"] else "Synced with the Main server"
+            elif r["sync_state"] == "rejected":
+                tip = f"Not synced: refused by the Main server ({r['sync_error'] or 'rejected'})"
+            else:
+                tip = "Not synced yet: waiting for the Main server"
+            cloud = QLabel()
+            cloud.setAlignment(Qt.AlignCenter)
+            cloud.setPixmap(cloud_pixmap(SYNC_COLORS["synced" if synced else "not_synced"], self.devicePixelRatioF()))
+            cloud.setToolTip(tip)
+            cloud.setAccessibleName("Synced" if synced else "Not synced")
+            cloud.setStyleSheet("background: transparent")
+            sync_item.setToolTip(tip)
             for c, it in enumerate(items):
                 self.table.setItem(i, c, it)
+            self.table.setCellWidget(i, 8, cloud)

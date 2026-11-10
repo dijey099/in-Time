@@ -14,11 +14,16 @@ NEW_COLUMNS = {
     "checkins": [("timezone", "VARCHAR(64)"), ("relay_name", "VARCHAR(100)"),
                  ("verify_status", "VARCHAR(12)"), ("verify_score", "DOUBLE PRECISION"),
                  ("verified_at", "TIMESTAMP WITH TIME ZONE"), ("snapshot_sha256", "VARCHAR(64)"),
-                 ("time_check", "VARCHAR(12)"), ("relay_status", "VARCHAR(2)"), ("relay_seq", "INTEGER")],
+                 ("time_check", "VARCHAR(12)"), ("relay_status", "VARCHAR(2)"), ("relay_seq", "INTEGER"),
+                 ("latitude", "DOUBLE PRECISION"), ("longitude", "DOUBLE PRECISION"),
+                 ("location_accuracy", "DOUBLE PRECISION"), ("area_check", "VARCHAR(12)"),
+                 ("area_distance", "DOUBLE PRECISION")],
     "users": [("department", "VARCHAR(100)"), ("face_embedding", "JSON"), ("face_model", "VARCHAR(32)")],
     "relays": [("local_relay", "BOOLEAN NOT NULL DEFAULT FALSE"), ("instance_id", "VARCHAR(64)"),
                ("timezone", "VARCHAR(64)"), ("online_since", "TIMESTAMP WITH TIME ZONE"),
-               ("last_seq", "INTEGER"), ("seq_key", "VARCHAR(64)"), ("public_key", "VARCHAR(64)")],
+               ("last_seq", "INTEGER"), ("seq_key", "VARCHAR(64)"), ("public_key", "VARCHAR(64)"),
+               ("area_lat", "DOUBLE PRECISION"), ("area_lng", "DOUBLE PRECISION"),
+               ("area_radius", "DOUBLE PRECISION")],
 }
 
 
@@ -47,6 +52,9 @@ def run(db):
     if "checkins.snapshot_sha256" in added:
         with db.engine.begin() as conn:
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_checkins_snapshot_sha256 ON checkins (snapshot_sha256)"))
+    if "checkins.area_check" in added:
+        with db.engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_checkins_area_check ON checkins (area_check)"))
     if "relays.timezone" in added:
         # Existing relays: pin the time zone of their latest check-in
         with db.engine.begin() as conn:

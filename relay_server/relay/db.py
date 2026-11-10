@@ -246,8 +246,9 @@ class Database:
         return max(int(stored), int(row["m"] or 0)) + 1
 
     def create_checkin(self, *, uuid, user_id, full_name, direction, ts, status, reason, distance, timezone,
-                       relay_name, snapshot: bytes | None, sync_state="pending", synced_at=None):
-        """Number, sign, encrypt and store a new check-in (and its snapshot). Returns the record."""
+                       relay_name, snapshot: bytes | None, sync_state="pending", synced_at=None, location=None):
+        """Number, sign, encrypt and store a new check-in (and its snapshot). Returns the record.
+        `location`: {"lat", "lng", "accuracy"} from the phone's GPS (signed with the check-in)."""
         with self._write_lock:
             seq = self._next_seq()
             snapshot_file = self._save_snapshot(uuid, snapshot) if snapshot else None
@@ -255,6 +256,10 @@ class Database:
                       "direction": direction, "ts": ts, "status": status, "reason": reason, "distance": distance,
                       "timezone": timezone,
                       "snapshot_sha256": hashlib.sha256(snapshot).hexdigest() if snapshot else None}
+            if location:
+                # rounded (≈ 10 cm): the same JSON numbers are signed here and checked on the main server
+                record["location"] = {"lat": round(float(location["lat"]), 6), "lng": round(float(location["lng"]), 6),
+                                      "accuracy": round(float(location.get("accuracy") or 0), 1)}
             record["signature"] = self.identity.sign_checkin(record)
             record.update(full_name=full_name, relay_name=relay_name, snapshot_file=snapshot_file)
             self.set("checkin_seq", seq)

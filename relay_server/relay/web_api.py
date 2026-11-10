@@ -25,6 +25,7 @@ log = logging.getLogger("relay.web")
 
 
 NO_INTERNET = "No internet connection: check-in is unavailable. Please try again later."
+NO_LOCATION = "GPS location is required: turn on location and allow it for this site in the browser."
 
 
 def create_web_app(cfg: Config, db: Database, clock, identifier, on_new_checkin=lambda: None, sync_state=None,
@@ -80,9 +81,12 @@ def create_web_app(cfg: Config, db: Database, clock, identifier, on_new_checkin=
             return jsonify(error=NO_INTERNET), 503
         if not identifier.ok:
             return jsonify(error=identifier.message), 503
+        body = request.get_json(silent=True) or {}
+        if _location(body) is None:
+            return jsonify(error=NO_LOCATION), 400
         if not identifier.allow(request.remote_addr):
             return jsonify(error="Too many attempts, wait a few seconds"), 429
-        jpeg = _jpeg(request.get_json(silent=True) or {})
+        jpeg = _jpeg(body)
         if jpeg is None:
             return jsonify(error="Missing or invalid snapshot"), 400
         try:
@@ -116,6 +120,10 @@ def create_web_app(cfg: Config, db: Database, clock, identifier, on_new_checkin=
             log.warning("Check-in refused: no internet / trusted time")
             return jsonify(error=NO_INTERNET), 503
         data = request.get_json(silent=True) or {}
+        loc = _location(data)
+        if loc is None:
+            log.warning("Check-in refused: no GPS location")
+            return jsonify(error=NO_LOCATION), 400
         t = identifier.consume(str(data.get("token", "")), request.remote_addr)
         if t is None:
             return jsonify(error="Recognition expired: look at the camera again"), 403
@@ -141,15 +149,29 @@ def create_web_app(cfg: Config, db: Database, clock, identifier, on_new_checkin=
             ts=now.isoformat(timespec="seconds"), status=status, reason=reason,
             # face distance = 1 - similarity (lower = closer)
             distance=round(1 - t["similarity"], 4), timezone=cfg.tz_name,
-            relay_name=db.get("site_name", "") or socket.gethostname(), snapshot=t["snapshot"])
-        log.info("Check-in %s %s %s %s (similarity %.2f)", user["id"], direction, status, reason or "",
-                 t["similarity"])
+            relay_name=db.get("site_name", "") or socket.gethostname(), snapshot=t["snapshot"], location=loc)
+        log.info("Check-in %s %s %s %s (similarity %.2f, location %.6f,%.6f ±%.0fm)", user["id"], direction,
+                 status, reason or "", t["similarity"], loc["lat"], loc["lng"], loc["accuracy"])
         on_new_checkin()
         return jsonify(ok=True, checkin={"user_id": user["id"], "full_name": user["full_name"],
                                          "direction": direction, "status": status, "reason": reason,
                                          "time": now.strftime("%H:%M")}), 201
 
     return app
+
+
+def _location(data):
+    """{"location": {"lat", "lng", "accuracy"}} sent by the phone's browser, or None if missing/invalid."""
+    loc = data.get("location")
+    if not isinstance(loc, dict):
+        return None
+    try:
+        lat, lng, acc = float(loc["lat"]), float(loc["lng"]), float(loc.get("accuracy", 0))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180 and 0 <= acc < 1e6):  # also rejects NaN
+        return None
+    return {"lat": lat, "lng": lng, "accuracy": acc}
 
 
 def _jpeg(data):

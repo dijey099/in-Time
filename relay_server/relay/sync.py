@@ -199,6 +199,8 @@ class SyncWorker(threading.Thread):
                 item = {k: c[k] for k in ("uuid", "seq", "user_id", "direction", "status", "reason", "distance",
                                           "timezone", "snapshot_sha256", "signature")}
                 item["timestamp"] = c["ts"]
+                if c.get("location") is not None:  # GPS location of the phone (signed)
+                    item["location"] = c["location"]
                 snap = self.db.snapshot_bytes(c)
                 if snap:
                     item["snapshot"] = base64.b64encode(snap).decode()

@@ -94,9 +94,13 @@ def request_message(method: str, path: str, ts: str, body: bytes) -> bytes:
 
 
 def checkin_message(record: dict) -> bytes:
-    """Must match main_server/app/api.py (checkin_message)."""
-    return b"in-Time checkin v1\n" + json.dumps({k: record.get(k) for k in CHECKIN_FIELDS}, sort_keys=True,
-                                                separators=(",", ":")).encode()
+    """Must match main_server/app/api.py (checkin_message).
+    "location" ({lat, lng, accuracy} from the phone's GPS) is signed when present; check-ins made
+    before it existed keep their original signature."""
+    fields = {k: record.get(k) for k in CHECKIN_FIELDS}
+    if record.get("location") is not None:
+        fields["location"] = record["location"]
+    return b"in-Time checkin v1\n" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
 
 
 def load_keys(store):

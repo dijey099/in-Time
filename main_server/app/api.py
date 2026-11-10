@@ -25,8 +25,12 @@ CHECKIN_FIELDS = ("uuid", "seq", "relay_id", "user_id", "direction", "ts", "stat
 
 
 def checkin_message(record: dict) -> bytes:
-    return b"in-Time checkin v1\n" + json.dumps({k: record.get(k) for k in CHECKIN_FIELDS}, sort_keys=True,
-                                                 separators=(",", ":")).encode()
+    """Same as the relay (relay/crypto.py): "location" is signed only when present (older check-ins
+    and relay versions have none)."""
+    fields = {k: record.get(k) for k in CHECKIN_FIELDS}
+    if record.get("location") is not None:
+        fields["location"] = record["location"]
+    return b"in-Time checkin v1\n" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
 
 
 def _signed_record(item: dict, relay_id: str) -> dict:
@@ -34,7 +38,45 @@ def _signed_record(item: dict, relay_id: str) -> dict:
     return {"uuid": item.get("uuid"), "seq": item.get("seq"), "relay_id": relay_id, "user_id": item.get("user_id"),
             "direction": item.get("direction"), "ts": item.get("timestamp"), "status": item.get("status"),
             "reason": item.get("reason"), "distance": item.get("distance"), "timezone": item.get("timezone"),
-            "snapshot_sha256": item.get("snapshot_sha256")}
+            "snapshot_sha256": item.get("snapshot_sha256"), "location": item.get("location")}
+
+
+# The phone's GPS accuracy (metres) is given the benefit of the doubt up to this value: a check-in
+# is "outside" only when even the edge of its accuracy circle is beyond the area. Capped, so a
+# huge reported accuracy can't hide a check-in made far away.
+AREA_ACCURACY_ALLOWANCE_M = 100.0
+
+
+def haversine_m(lat1, lng1, lat2, lng2) -> float:
+    r = 6371008.8  # mean Earth radius (m)
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _location(value):
+    """(lat, lng, accuracy) from the signed "location", None when the relay sent none."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("bad location")
+    lat, lng, acc = float(value["lat"]), float(value["lng"]), float(value.get("accuracy") or 0)
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180 and 0 <= acc < 1e6):  # also rejects NaN
+        raise ValueError("bad location")
+    return lat, lng, acc
+
+
+def area_check(relay, loc):
+    """("inside" | "outside" | "no_location" | None, distance from the area's centre in metres)."""
+    if not relay.has_area:
+        return None, None
+    if loc is None:
+        return "no_location", None
+    lat, lng, acc = loc
+    dist = haversine_m(relay.area_lat, relay.area_lng, lat, lng)
+    outside = dist - min(acc, AREA_ACCURACY_ALLOWANCE_M) > relay.area_radius
+    return ("outside" if outside else "inside"), round(dist, 1)
 
 
 def effective_settings(relay):
@@ -139,7 +181,7 @@ def _distance(value):
 @relay_required
 def push_checkins():
     """Body: {"checkins": [{uuid, seq, user_id, direction, timestamp, status, reason,
-    distance, timezone, snapshot_sha256, signature, snapshot (base64 jpeg)}]}
+    distance, timezone, snapshot_sha256, location {lat, lng, accuracy}, signature, snapshot (base64 jpeg)}]}
 
     Every check-in is signed by the relay when it is made (its private key never leaves it): one
     created or changed anywhere else (relay database edited, stolen relay token) is rejected
@@ -227,6 +269,13 @@ def push_checkins():
                 time_check = "gap"  # number used twice: the relay's numbering was reset (data deleted)
                 current_app.logger.warning("Check-in %s: relay %s reused number %d", uuid, relay.name, seq)
 
+            # GPS location: never a reason to refuse a check-in, only flagged when outside the area
+            loc = _location(item.get("location"))
+            in_area, area_distance = area_check(relay, loc)
+            if in_area == "outside":
+                current_app.logger.warning("Check-in %s: %s m from the centre of relay %s's area (radius %s m)",
+                                           uuid, area_distance, relay.name, relay.area_radius)
+
             snapshot = _snapshot(item.get("snapshot"))
             snapshot_path = sha = None
             if snapshot is not None and hashlib.sha256(snapshot).hexdigest() != item.get("snapshot_sha256"):
@@ -254,6 +303,11 @@ def push_checkins():
                     timezone=tz_name,
                     relay_name=relay.name,
                     relay_seq=seq,
+                    latitude=loc[0] if loc else None,
+                    longitude=loc[1] if loc else None,
+                    location_accuracy=loc[2] if loc else None,
+                    area_check=in_area,
+                    area_distance=area_distance,
                 )
             )
             relay.last_seq = max(relay.last_seq or 0, seq)

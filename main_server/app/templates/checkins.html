@@ -26,6 +26,10 @@
     <select name="face"><option value="">all</option>
       {% for v, l in [('flagged', 'flagged (face or time)'), ('match', 'match'), ('unchecked', 'not checked')] %}<option value="{{ v }}" {{ 'selected' if args.face == v }}>{{ l }}</option>{% endfor %}
     </select></label>
+  <label>Location
+    <select name="area"><option value="">all</option>
+      {% for v, l in [('outside', 'outside site area'), ('inside', 'on site'), ('no_location', 'no location')] %}<option value="{{ v }}" {{ 'selected' if args.area == v }}>{{ l }}</option>{% endfor %}
+    </select></label>
   <button>Filter</button>
   <a class="button secondary" href="{{ url_for('admin.checkins_csv', **args) }}">Export CSV</a>
 </form>

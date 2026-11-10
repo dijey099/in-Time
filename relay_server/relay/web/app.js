@@ -8,6 +8,8 @@
   const RETRY_MS = 1500;         // pause after "not recognised"
   const AUTO_CONFIRM_S = 4;      // suggested direction is sent automatically
   const RESULT_MS = 3500;
+  const GEO_MAX_AGE_MS = 60000;  // a location fix older than this no longer allows a check-in
+  const GEO_RETRY_MS = 5000;     // retry after "location unavailable" (GPS off, no fix yet)
 
   const $ = (id) => document.getElementById(id);
   const svg = (body) => `<svg viewBox="0 0 24 24" width="64" height="64" aria-hidden="true">${body}</svg>`;
@@ -69,6 +71,70 @@
     if (!modelsOk && online) setHint(st.models_message || 'Face recognition not ready on the relay');
   }
 
+  // GPS location is mandatory: no check-in can start without a recent fix from an
+  // authorised, enabled location service. The relay refuses requests without it too.
+  let geo = null, geoMessage = 'Waiting for GPS location…', geoWatch = null, geoRetry = null;
+
+  const locationOk = () => geo !== null && Date.now() - geo.ts < GEO_MAX_AGE_MS;
+  const locationPayload = () => ({lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy, ts: geo.ts});
+
+  function onPosition(p) {
+    geo = {lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, ts: Date.now()};
+    geoMessage = '';
+    document.body.classList.remove('no-geo');
+  }
+
+  function onPositionError(err) {
+    geo = null;
+    document.body.classList.add('no-geo');
+    if (err.code === 1) {  // PERMISSION_DENIED: the browser will not ask again by itself
+      geoMessage = 'Location access is blocked. Allow location for this site in the browser settings, then reload.';
+    } else if (err.code === 2) {  // POSITION_UNAVAILABLE: location / GPS switched off
+      geoMessage = 'Location unavailable. Turn on GPS / location services on this phone.';
+    } else {  // TIMEOUT
+      geoMessage = 'Searching GPS location…';
+    }
+    setHint(geoMessage);
+    if (err.code !== 1) {
+      clearTimeout(geoRetry);
+      geoRetry = setTimeout(startLocation, GEO_RETRY_MS);
+    }
+  }
+
+  function startLocation() {
+    if (!navigator.geolocation) {
+      geoMessage = 'This browser cannot share its location: check-in is not possible.';
+      document.body.classList.add('no-geo');
+      return;
+    }
+    if (geoWatch !== null) navigator.geolocation.clearWatch(geoWatch);
+    geoWatch = navigator.geolocation.watchPosition(onPosition, onPositionError,
+      {enableHighAccuracy: true, maximumAge: 10000, timeout: 20000});
+  }
+
+  // Resolves once a first fix is available (this is when the browser asks for permission).
+  async function waitForLocation() {
+    if (!window.isSecureContext) {
+      throw new Error('Location needs HTTPS. Open the https:// address shown on the relay screen.');
+    }
+    if (!navigator.geolocation) {
+      throw new Error('This browser cannot share its location: check-in is not possible.');
+    }
+    // re-start the watch as soon as the user re-allows location in the browser settings
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        const perm = await navigator.permissions.query({name: 'geolocation'});
+        perm.onchange = () => { if (perm.state !== 'denied') startLocation(); };
+      } catch (e) { /* not supported */ }
+    }
+    startLocation();
+    setHint(geoMessage);
+    while (!locationOk()) {
+      await new Promise((r) => setTimeout(r, 500));
+      setHint(geoMessage || 'Waiting for GPS location…');
+    }
+  }
+
   async function startCamera() {
     if (!window.isSecureContext || !navigator.mediaDevices) {
       throw new Error('Camera needs HTTPS. Open the https:// address shown on the relay screen.');
@@ -105,6 +171,13 @@
 
   async function detectOnce() {
     if (!online || !modelsOk) return;  // the relay refuses check-ins
+    if (!locationOk()) {
+      frame.className = ''; streak = 0;
+      document.body.classList.add('no-geo');
+      setHint(geoMessage || 'Location lost. Turn on GPS / location services on this phone.');
+      return;
+    }
+    document.body.classList.remove('no-geo');
     const det = await faceapi.detectSingleFace(video, detectorOptions);
     if (busy || !online) return;  // status may have changed during detection
     if (!det) {
@@ -127,11 +200,13 @@
 
   // The relay recognises the person in the picture (nothing is decided on the phone)
   async function identify(snap) {
+    if (!locationOk()) { busy = false; return; }
     setHint('Recognising…');
     let res;
     try {
       res = await api('api/identify', {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({snapshot: snap}),
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({snapshot: snap, location: locationPayload()}),
       });
     } catch (e) {
       if (/internet/i.test(e.message)) pollStatus();
@@ -173,10 +248,14 @@
   async function submit(user, direction, token) {
     clearInterval(countdownTimer);
     $('confirm').classList.add('hidden');
+    if (!locationOk()) {
+      showResult('err', ICONS.err, 'Not recorded', geoMessage || 'GPS location is required to check in.');
+      return;
+    }
     try {
       const res = await api('api/checkins', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({token, direction}),
+        body: JSON.stringify({token, direction, location: locationPayload()}),
       });
       const c = res.checkin;
       const reason = c.reason === 'late' ? 'Late arrival' : c.reason === 'early' ? 'Early departure' : 'On time';
@@ -216,6 +295,9 @@
       setHint('Loading face models…');
       await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
       await loadStatus();
+      footer.textContent = 'GPS location is required to check in';
+      await waitForLocation();
+      footer.textContent = '';
       setHint('Starting camera…');
       await startCamera();
       setHint('Look at the camera');
