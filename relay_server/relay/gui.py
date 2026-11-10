@@ -308,15 +308,12 @@ class MainWindow(QMainWindow):
         return self._photo_cache[user_id]
 
     def _refresh_public_ip(self):
-        ip, err = self.public_ip.value, self.public_ip.error
-        if (ip, err) == self._shown_ip:
+        ip = None if self.public_ip.error else self.public_ip.value
+        if ip == self._shown_ip:
             return
-        self._shown_ip = (ip, err)
-        if ip:
-            stale = f" <small style='color:#d97706'>(last known: {html.escape(err)})</small>" if err else ""
-            self.ip_label.setText(f"Public IP: <b style='font-size:13pt'>{html.escape(ip)}</b>{stale}")
-        else:
-            self.ip_label.setText(f"Public IP: <span style='color:#6b7280'>{'not available: ' + html.escape(err) if err else 'checking…'}</span>")
+        self._shown_ip = ip
+        self.ip_label.setText(f"Public IP: <b style='font-size:13pt'>{html.escape(ip)}</b>" if ip
+                              else "Public IP: <span style='color:#6b7280'>not available</span>")
 
     def refresh(self, force=False):
         self._clock_warnings = []
