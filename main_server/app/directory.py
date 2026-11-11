@@ -12,7 +12,7 @@ the directory server (never stored), over LDAPS or StartTLS when configured.
 """
 import ssl
 
-from ldap3 import NONE, SUBTREE, Connection, Server, Tls
+from ldap3 import ALL_ATTRIBUTES, BASE, NONE, SUBTREE, Connection, Server, Tls
 from ldap3.core.exceptions import LDAPException
 from ldap3.utils.conv import escape_filter_chars
 from ldap3.utils.dn import parse_dn
@@ -59,6 +59,18 @@ def _bind(conf, server, user, password):
         raise DirectoryError(str(exc) or type(exc).__name__) from None
 
 
+def _name_attrs(source, conf):
+    """(first name attribute, last name attribute, attribute used when both are empty)."""
+    return (conf.get("attr_first_name") or "givenName", conf.get("attr_last_name") or "sn",
+            "displayName" if source == "ad" else "cn")
+
+
+def _full_name(attrs, first_attr, last_attr, fallback):
+    """Full name shown in the console: First + Last name (else the fallback attribute, else cn)."""
+    parts = [str(_first(attrs, a) or "").strip() for a in (first_attr, last_attr)]
+    return " ".join(p for p in parts if p) or _first(attrs, fallback) or _first(attrs, "cn")
+
+
 def _first(entry, attr):
     if not attr or attr not in entry:
         return None
@@ -79,29 +91,97 @@ def _search(conn, base, flt, attrs):
     return [e for e in conn.response or [] if e.get("type") == "searchResEntry"]
 
 
+# ----------------------------------------------- attributes of a test account
+# Never shown, even hashed (the password test still shows that the attribute exists)
+SECRET_ATTR = ("password", "pwd", "secret", "krbprincipalkey", "sambantpassword", "sambalmpassword",
+               "supplementalcredentials", "dbcspwd", "ntpwdhistory", "lmpwdhistory", "msds-keycredentiallink")
+MAX_VALUES = 50
+
+
+def _sid(raw):
+    """objectSid bytes -> S-1-5-21-..."""
+    rev, count = raw[0], raw[1]
+    auth = int.from_bytes(raw[2:8], "big")
+    subs = [int.from_bytes(raw[8 + 4 * i:12 + 4 * i], "little") for i in range(count)]
+    return "S-" + "-".join(str(x) for x in [rev, auth] + subs)
+
+
+def _readable(name, value):
+    if isinstance(value, (bytes, bytearray)):
+        low = name.lower()
+        try:
+            if low in ("objectsid", "securityidentifier") and len(value) >= 8:
+                return _sid(bytes(value))
+            if low in ("objectguid", "msexchmailboxguid") and len(value) == 16:
+                import uuid
+                return str(uuid.UUID(bytes_le=bytes(value)))
+            text = bytes(value).decode("utf-8")
+            if text.isprintable():
+                return text
+        except (UnicodeDecodeError, ValueError, IndexError):
+            pass
+        return f"(binary, {len(value)} bytes)"
+    return str(value)
+
+
+def readable_attributes(attrs):
+    """[(name, [values])] sorted by name, for the test result: secrets hidden, binary made readable."""
+    out = []
+    for name, value in (attrs or {}).items():
+        if any(s in name.lower() for s in SECRET_ATTR):
+            out.append((name, ["(hidden)"]))
+            continue
+        values = value if isinstance(value, list) else [value]
+        shown = [_readable(name, v)[:500] for v in values[:MAX_VALUES]]
+        if len(values) > MAX_VALUES:
+            shown.append(f"… {len(values) - MAX_VALUES} more")
+        out.append((name, shown))
+    return sorted(out, key=lambda item: item[0].lower())
+
+
+def _all_attributes(conn, dn):
+    """Every attribute of an entry the connection may read ({} if it can't)."""
+    try:
+        conn.search(dn, "(objectClass=*)", BASE, attributes=ALL_ATTRIBUTES)
+    except LDAPException:
+        return {}
+    for e in conn.response or []:
+        if e.get("type") == "searchResEntry":
+            attrs = dict(e.get("raw_attributes") or {})
+            attrs.update({k: v for k, v in (e.get("attributes") or {}).items() if v not in (None, [], "")})
+            return {k: v for k, v in attrs.items() if v not in (None, [], b"", "")}
+    return {}
+
+
 # ----------------------------------------------------------------------- LDAP
-def ldap_authenticate(conf, username, password):
+def ldap_authenticate(conf, username, password, all_attributes=False):
     server = _server(conf)
     service = _bind(conf, server, conf.get("bind_dn") or None, conf.get("bind_password") or None)
     if service is None:
         raise DirectoryError("the service account (bind DN) was refused by the server")
     try:
         flt = (conf.get("user_filter") or "(uid={username})").replace("{username}", escape_filter_chars(username))
-        name_attr, mail_attr = conf.get("attr_name") or "cn", conf.get("attr_email") or "mail"
-        found = _search(service, conf.get("user_base") or "", flt, [name_attr, mail_attr])
+        first_attr, last_attr, fallback = _name_attrs("ldap", conf)
+        mail_attr = conf.get("attr_email") or "mail"
+        found = _search(service, conf.get("user_base") or "", flt, [first_attr, last_attr, fallback, mail_attr])
         if len(found) != 1:
             raise AuthFailed("unknown user" if not found else "several accounts match the user filter")
         dn, attrs = found[0]["dn"], found[0]["attributes"]
         user_conn = _bind(conf, server, dn, password)
         if user_conn is None:
             raise AuthFailed("wrong password")
+        every = None
+        if all_attributes:  # test: what the account itself can read (else what the service account can)
+            every = _all_attributes(user_conn, dn) or _all_attributes(service, dn)
         user_conn.unbind()
         groups = []
         if conf.get("group_base"):
             gflt = conf.get("group_filter") or DEFAULT_GROUP_FILTER
             gflt = gflt.replace("{dn}", escape_filter_chars(dn)).replace("{username}", escape_filter_chars(username))
             groups = [g["dn"] for g in _search(service, conf["group_base"], gflt, ["cn"])]
-        return {"dn": dn, "full_name": _first(attrs, name_attr), "email": _first(attrs, mail_attr), "groups": groups}
+        return {"dn": dn, "full_name": _full_name(attrs, first_attr, last_attr, fallback),
+                "email": _first(attrs, mail_attr), "groups": groups,
+                "attributes": every}
     finally:
         service.unbind()
 
@@ -135,11 +215,13 @@ def _expand_member_of(conn, dns, limit=500):
     return list(found.values())
 
 
-def ad_authenticate(conf, username, password):
+def ad_authenticate(conf, username, password, all_attributes=False):
     domain = (conf.get("domain") or "").strip()
     if not domain:
         raise DirectoryError("no domain")
     sam = ad_username(username, conf)
+    first_attr, last_attr, fallback = _name_attrs("ad", conf)
+    mail_attr = conf.get("attr_email") or "mail"
     server = _server(conf)
     conn = _bind(conf, server, f"{sam}@{domain}", password)
     if conn is None:
@@ -147,7 +229,7 @@ def ad_authenticate(conf, username, password):
     try:
         found = _search(conn, ad_base(conf),
                         f"(&(objectCategory=person)(objectClass=user)(sAMAccountName={escape_filter_chars(sam)}))",
-                        ["displayName", "cn", "mail", "memberOf"])
+                        [first_attr, last_attr, fallback, "cn", mail_attr, "memberOf"])
         if not found:
             raise AuthFailed("account not found under the base DN")
         dn, attrs = found[0]["dn"], found[0]["attributes"]
@@ -159,19 +241,20 @@ def ad_authenticate(conf, username, password):
             groups = list(dict.fromkeys(groups + [g["dn"] for g in nested]))
             if not nested and groups:  # rule not supported by this server: follow the groups' memberOf
                 groups = _expand_member_of(conn, groups)
-        return {"dn": dn, "full_name": _first(attrs, "displayName") or _first(attrs, "cn"),
-                "email": _first(attrs, "mail"), "groups": groups}
+        return {"dn": dn, "full_name": _full_name(attrs, first_attr, last_attr, fallback),
+                "email": _first(attrs, mail_attr), "groups": groups,
+                "attributes": _all_attributes(conn, dn) if all_attributes else None}
     finally:
         conn.unbind()
 
 
-def authenticate(source, conf, username, password):
+def authenticate(source, conf, username, password, all_attributes=False):
     """{"dn", "full_name", "email", "groups"}; AuthFailed or DirectoryError otherwise."""
     if not password:
         raise AuthFailed("empty password")  # an empty password would be an anonymous bind
     if source == "ad":
-        return ad_authenticate(conf, username, password)
-    return ldap_authenticate(conf, username, password)
+        return ad_authenticate(conf, username, password, all_attributes)
+    return ldap_authenticate(conf, username, password, all_attributes)
 
 
 # ------------------------------------------------------------- group listing
@@ -259,7 +342,9 @@ def list_users(source, conf):
         if source == "ad":
             base = conf.get("user_base") or ad_base(conf)
             flt = "(&(objectCategory=person)(objectClass=user))"
-            for e in _paged(conn, base, flt, ["sAMAccountName", "displayName", "cn", "mail", "memberOf",
+            first_attr, last_attr, fallback = _name_attrs("ad", conf)
+            mail_attr = conf.get("attr_email") or "mail"
+            for e in _paged(conn, base, flt, ["sAMAccountName", first_attr, last_attr, fallback, "cn", mail_attr, "memberOf",
                                               "userAccountControl"], MAX_USERS):
                 attrs = e.get("attributes") or {}
                 sam = _first(attrs, "sAMAccountName")
@@ -269,22 +354,26 @@ def list_users(source, conf):
                     uac = int(_first(attrs, "userAccountControl") or 0)
                 except (TypeError, ValueError):
                     uac = 0
-                users.append({"dn": e["dn"], "username": str(sam), "full_name": _first(attrs, "displayName") or _first(attrs, "cn"),
-                              "email": _first(attrs, "mail"), "member_of": _values(attrs, "memberOf"),
+                users.append({"dn": e["dn"], "username": str(sam),
+                              "full_name": _full_name(attrs, first_attr, last_attr, fallback),
+                              "email": _first(attrs, mail_attr), "member_of": _values(attrs, "memberOf"),
                               "disabled": bool(uac & 2)})  # ACCOUNTDISABLE
         else:
             login_attr = ldap_login_attribute(conf)
-            name_attr, mail_attr = conf.get("attr_name") or "cn", conf.get("attr_email") or "mail"
+            first_attr, last_attr, fallback = _name_attrs("ldap", conf)
+            mail_attr = conf.get("attr_email") or "mail"
             flt = (conf.get("user_filter") or "(uid={username})").replace("{username}", "*")
             # with a group filter of their own, the groups of each account are searched like at login
             gflt = (conf.get("group_filter") or "").strip()
             exact = bool(conf.get("group_base")) and gflt not in ("", DEFAULT_GROUP_FILTER)
-            for e in _paged(conn, conf.get("user_base") or "", flt, [login_attr, name_attr, mail_attr], MAX_USERS):
+            for e in _paged(conn, conf.get("user_base") or "", flt,
+                            [login_attr, first_attr, last_attr, fallback, mail_attr], MAX_USERS):
                 attrs = e.get("attributes") or {}
                 login = _first(attrs, login_attr)
                 if not login:
                     continue
-                item = {"dn": e["dn"], "username": str(login), "full_name": _first(attrs, name_attr),
+                item = {"dn": e["dn"], "username": str(login),
+                        "full_name": _full_name(attrs, first_attr, last_attr, fallback),
                         "email": _first(attrs, mail_attr), "member_of": [], "disabled": False}
                 if exact:
                     one = gflt.replace("{dn}", escape_filter_chars(e["dn"])).replace("{username}", escape_filter_chars(str(login)))
@@ -297,11 +386,13 @@ def list_users(source, conf):
 
 def test_connection(source, conf, username=None, password=None):
     """Check the settings: bind with the service account (LDAP) and, when given, log in a test user.
-    Returns a message; raises DirectoryError / AuthFailed."""
+    Returns (message, attributes of the test account or None); raises DirectoryError / AuthFailed."""
     if username:
-        info = authenticate(source, conf, username, password)
+        info = authenticate(source, conf, username, password, all_attributes=True)
         return (f"Login OK for {info['dn']} — {len(info['groups'])} group(s): "
-                + (", ".join(cn_of(g) for g in info["groups"][:15]) or "none"))
+                + (", ".join(cn_of(g) for g in info["groups"][:15]) or "none"),
+                {"dn": info["dn"], "full_name": info["full_name"], "email": info["email"],
+                 "attributes": readable_attributes(info.get("attributes"))})
     if source == "ad" and not conf.get("bind_user"):
         raise DirectoryError("enter a test username and password (or a reader account)")
     conn = _service_connection(source, conf)
@@ -309,6 +400,6 @@ def test_connection(source, conf, username=None, password=None):
     who = "the reader account" if source == "ad" else ("the service account" if conf.get("bind_dn") else "anonymous bind")
     try:
         found = len(list_groups(source, conf))
-        return f"Connected with {who} — {found} group(s) found"
+        return f"Connected with {who} — {found} group(s) found", None
     except DirectoryError as exc:
-        return f"Connected with {who} — groups not listed: {exc}"
+        return f"Connected with {who} — groups not listed: {exc}", None

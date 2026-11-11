@@ -4,7 +4,7 @@ import re
 from flask import current_app, flash, g, redirect, render_template, request, url_for
 
 from . import accounts, audit, roles
-from .accounts import AUTH_DEFAULTS, SOURCES, permission_required
+from .accounts import AUTH_DEFAULTS, SOURCES, can, forbidden, permission_required
 from .admin import admin_bp
 from .directory import AuthFailed, DirectoryError, cn_of, test_connection
 from .models import Group, Setting, User, db
@@ -89,7 +89,7 @@ def _save_auth(new):
 
 
 @admin_bp.route("/settings/authentication", methods=["GET", "POST"])
-@permission_required("access.manage")
+@permission_required("auth.manage")
 def settings_authentication():
     test_result = None
     form_values = None
@@ -110,12 +110,12 @@ def settings_authentication():
                 _check_directory_settings(source, new)
                 username = request.form.get(f"test_username_{source}", "").strip()
                 try:
-                    message = test_connection(source, accounts.directory_conf(source, new), username or None,
-                                              request.form.get(f"test_password_{source}", ""))
-                    test_result = (source, "ok", message)
+                    message, account = test_connection(source, accounts.directory_conf(source, new), username or None,
+                                                       request.form.get(f"test_password_{source}", ""))
+                    test_result = (source, "ok", message, account)
                 except (AuthFailed, DirectoryError) as exc:
                     kind = "Login refused" if isinstance(exc, AuthFailed) else "Server error"
-                    test_result = (source, "error", f"{kind}: {exc}")
+                    test_result = (source, "error", f"{kind}: {exc}", None)
                 audit.log("auth.test", "settings", source, SOURCES[source],
                           {"test_user": username or None, "result": test_result[1], "message": test_result[2][:300]},
                           commit=True)
@@ -157,7 +157,7 @@ def _user_audit(user):
 
 
 @admin_bp.get("/settings/users")
-@permission_required("access.manage")
+@permission_required("access.view")
 def settings_users():
     source = accounts.auth_source()
     last = _sync_if_stale(source) if source != "local" else None  # LDAP / AD: accounts read from the directory
@@ -332,8 +332,10 @@ def _sync_if_stale(source):
 
 
 @admin_bp.route("/settings/groups", methods=["GET", "POST"])
-@permission_required("access.manage")
+@permission_required("access.view")
 def settings_groups():
+    if request.method == "POST" and not can("access.manage"):  # Technician: read only
+        return forbidden("access.manage")
     source = accounts.auth_source()
     if source != "local":
         return _directory_groups_page(source)
@@ -435,7 +437,7 @@ def settings_group_delete(group_id):
 
 # ---------------------------------------------------------------------- roles
 @admin_bp.get("/settings/roles")
-@permission_required("access.manage")
+@permission_required("access.view")
 def settings_roles():
     source = accounts.auth_source()
     users = User.query.filter_by(active=True, source=source).all()

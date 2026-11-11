@@ -1,9 +1,9 @@
 <nav class="subnav" aria-label="Settings">
   {% for endpoint, label, perm in [('admin.settings', 'General', 'settings.general'),
-                                    ('admin.settings_authentication', 'Authentication', 'access.manage'),
-                                    ('admin.settings_users', 'Users', 'access.manage'),
-                                    ('admin.settings_groups', 'Groups', 'access.manage'),
-                                    ('admin.settings_roles', 'Roles', 'access.manage')] if can(perm) %}
+                                    ('admin.settings_authentication', 'Authentication', 'auth.manage'),
+                                    ('admin.settings_users', 'Users', 'access.view'),
+                                    ('admin.settings_groups', 'Groups', 'access.view'),
+                                    ('admin.settings_roles', 'Roles', 'access.view')] if can(perm) %}
     {% set on = request.endpoint == endpoint or (endpoint == 'admin.settings_users' and request.endpoint == 'admin.settings_user_form') %}
     <a href="{{ url_for(endpoint) }}" class="{{ 'active' if on }}" {{ 'aria-current="page"'|safe if on }}>{{ label }}</a>
   {% endfor %}

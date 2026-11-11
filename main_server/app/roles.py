@@ -1,7 +1,8 @@
 """Built-in roles of the admin console and what each one may do.
 
-Roles are ordered: each one can do everything the previous one can, plus more. A user's role is the
-highest of their own role and the roles of their groups (see accounts.effective_role).
+Each role has its own list of permissions (a role doesn't include the ones below it). A user's role is
+the highest of their own role and their groups' roles; they may do what any of those roles allows
+(see accounts.effective_role / effective_permissions).
 """
 
 # (permission, description shown on the Roles page)
@@ -13,31 +14,30 @@ PERMISSIONS = [
     ("collaborators.edit", "Create, edit, deactivate and delete collaborators"),
     ("companies.view", "See companies and departments"),
     ("companies.edit", "Create, rename and delete companies and departments"),
-    ("relays.manage", "Manage relays (create, edit, tokens, site areas)"),
+    ("relays.manage", "See and manage relays (create, edit, tokens, site areas)"),
     ("settings.general", "Change the general settings (max in / min out times)"),
-    ("access.manage", "Manage authentication, users, groups and roles"),
+    ("auth.manage", "Change the authentication source and its settings"),
+    ("access.view", "See users, groups and roles"),
+    ("access.manage", "Create, edit, unlock and delete users; create groups and give them roles"),
     ("logs.view", "See and export the logs"),
 ]
 
+VIEWER = {"dashboard.view", "attendances.view", "attendances.export"}
+OPERATOR = VIEWER | {"collaborators.view", "collaborators.edit", "companies.view", "companies.edit"}
+TECHNICIAN = {"dashboard.view", "attendances.view", "relays.manage", "settings.general", "auth.manage",
+              "access.view"}
+
 # role -> (label, description, permissions), lowest first
 ROLES = {
-    "viewer": ("Viewer", "Sees the dashboard and attendances, and can export attendances.",
-               {"dashboard.view", "attendances.view", "attendances.export"}),
-    "operator": ("Operator", "Viewer, plus sees and updates collaborators and companies.",
-                 {"collaborators.view", "collaborators.edit", "companies.view", "companies.edit"}),
-    "technician": ("Technician", "Operator, plus manages relays and the general settings.",
-                   {"relays.manage", "settings.general"}),
-    "administrator": ("Administrator", "Everything: Technician, plus authentication, users, groups, roles "
-                      "and the logs.", {"access.manage", "logs.view"}),
+    "viewer": ("Viewer", "Sees the dashboard and attendances, and can export attendances.", VIEWER),
+    "operator": ("Operator", "Viewer, plus sees and updates collaborators and companies.", OPERATOR),
+    "technician": ("Technician", "Sees the dashboard and attendances, manages relays, changes the general and "
+                   "authentication settings, and sees (without changing) users, groups and roles.", TECHNICIAN),
+    "administrator": ("Administrator", "Everything, including users, groups, roles and the logs.",
+                      {p for p, _ in PERMISSIONS}),
 }
 ORDER = list(ROLES)
-
-# Each role includes the permissions of the roles below it
-_ALL = {}
-_acc = set()
-for _name in ORDER:
-    _acc = _acc | ROLES[_name][2]
-    _ALL[_name] = frozenset(_acc)
+_ALL = {name: frozenset(ROLES[name][2]) for name in ORDER}
 
 
 def permissions(role):

@@ -17,12 +17,14 @@
 <p class="muted">A group gives a role to its members. Add members on the <a href="{{ url_for('admin.settings_users') }}">Users</a>
   page. (With LDAP or Active Directory as the authentication source, this page lists the directory's groups instead.)</p>
 
+{% if can('access.manage') %}
 <form method="post" class="card">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   <h2>New group</h2>
   {{ group_fields(None) }}
   <button>Create group</button>
 </form>
+{% endif %}
 
 {% for grp in groups %}
 <section class="card" id="group-{{ grp.id }}">
@@ -30,16 +32,19 @@
     <h2>{{ grp.name }}</h2>
     <span class="pill role-{{ grp.role }}">{{ role_label(grp.role) }}</span>
     <span class="spacer"></span>
+    {% if can('access.manage') %}
     <form method="post" action="{{ url_for('admin.settings_group_delete', group_id=grp.id) }}"
           onsubmit="return confirm('Delete the group {{ grp.name|e }}? Its members lose its role.')">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Delete</button>
     </form>
+    {% endif %}
   </div>
   {% if grp.description %}<p class="muted">{{ grp.description }}</p>{% endif %}
   <p><b>Members:</b>
     {% for u in grp.users %}<span class="tag">{{ u.username }}</span>{% endfor %}
     {% if not grp.users %}<span class="muted">none yet</span>{% endif %}
   </p>
+  {% if can('access.manage') %}
   <details class="rename">
     <summary class="button secondary small">Edit</summary>
     <form method="post" action="{{ url_for('admin.settings_group_edit', group_id=grp.id) }}">
@@ -48,6 +53,7 @@
       <button class="small">Save</button>
     </form>
   </details>
+  {% endif %}
 </section>
 {% else %}
 <p class="muted">No group yet.</p>

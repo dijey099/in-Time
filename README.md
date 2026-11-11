@@ -239,8 +239,10 @@ Who can do what in the console is set on **Settings**:
 |---|---|
 | **Viewer** | see the Dashboard and Attendances, and export attendances |
 | **Operator** | Viewer, plus see and update Collaborators and Companies |
-| **Technician** | Operator, plus Relays and Settings > General (max in / min out times) |
-| **Administrator** | everything: Technician, plus Settings > Authentication, Users, Groups, Roles, and the Logs |
+| **Technician** | see the Dashboard and Attendances (no export), see and update Relays, change Settings > General and Authentication, and see (read only) Settings > Users, Groups and Roles |
+| **Administrator** | everything, including managing Settings > Users, Groups and Roles, and the Logs |
+
+A person with several roles (their own and their groups') may do what any of them allows.
 
 - **Users** (Settings > Users): the accounts of the authentication source in use (accounts of another source are
   hidden). **Local**: accounts created here, password hashed here (12+ characters with letters and digits); each
@@ -260,7 +262,10 @@ Who can do what in the console is set on **Settings**:
   accounts can log in. **Local** (default, nothing to set up): accounts created on the Users page. **LDAP**:
   server URL, LDAPS / StartTLS, service account, user and group search. **Active Directory**: domain controller URL,
   domain, a reader account (any domain user) to list users and groups, and optional users / groups base DNs; people log in as *alice*, *DOMAIN\\alice* or *alice@domain*. Only the chosen source's settings are
-  shown; **Test** checks them before they are saved. Accounts added to the directory since the last read can log in
+  shown; **Test** checks them before they are saved. With a test username, it also lists every attribute of that
+  account and its values, to pick the first name, last name, e-mail (and, for LDAP, login) attributes in one click
+  (password attributes are hidden). The console shows the full name as First name + Last name (default `givenName`
+  and `sn`; `cn`, or `displayName` on AD, when both are empty). Accounts added to the directory since the last read can log in
   at once when one of their groups gives them a role. Accounts of another source stay listed but can't log in until that
   source is chosen again. The built-in administrator (`username` / `password` in `[admin]` of `main.conf`) always logs
   in, whatever the source. The service account password is stored encrypted with `secret_key` (enter it again if
@@ -269,7 +274,7 @@ Who can do what in the console is set on **Settings**:
 
 Changes apply at once, even to people already logged in (their role is read at every page). The built-in
 administrator of `main.conf` always works: it can't be turned off, disabled or locked from the console, so the
-console can always be administered. You can't remove your own Administrator access. Pages and actions a role
+console can always be administered. You can't make a change that removes your own access. Pages and actions a role
 doesn't allow are refused, and the attempt is recorded in the Logs. Wrong passwords lock the account they were
 typed for, not the whole console (see [Account lock](#account-lock)).
 

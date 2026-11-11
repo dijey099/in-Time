@@ -3,8 +3,8 @@
 {% block content %}
 <h1>Settings</h1>
 {% include "_settings_nav.html" %}
-<p class="muted">Built-in roles. Each one can do everything the role on its left can, plus more. Give a role to a user directly or
-  through a group: a user's role is the highest of the two.</p>
+<p class="muted">Built-in roles. Give a role to a user directly or through a group: a user may do what any of their roles
+  allows.</p>
 <table class="roles-matrix">
   <thead><tr><th>Permission</th>{% for name in roles.ORDER %}<th><span class="pill role-{{ name }}">{{ roles.ROLES[name][0] }}</span></th>{% endfor %}</tr></thead>
   <tbody>
@@ -19,6 +19,5 @@
 <div class="role-cards">
   {% for name in roles.ORDER %}<div class="card"><span class="pill role-{{ name }}">{{ roles.ROLES[name][0] }}</span><p>{{ roles.ROLES[name][1] }}</p></div>{% endfor %}
 </div>
-<p class="muted small">Settings &gt; General (max in / min out times) is open to Technicians; Authentication, Users, Groups and
-  Roles only to Administrators.</p>
+<p class="muted small">Technicians change Settings &gt; General and Authentication, and only see Users, Groups and Roles.</p>
 {% endblock %}

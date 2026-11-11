@@ -442,3 +442,16 @@ tr.muted-row td { background: #fafafe; }
 .icon-button.spinning svg { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .icon-button.spinning svg { animation: none; } }
+
+/* attributes of a test account (Settings > Authentication) */
+.attr-box { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fff; }
+.attr-head { align-items: center; gap: 8px; flex-wrap: wrap; }
+.attr-search { max-width: 220px; }
+.table-scroll { max-height: 420px; overflow: auto; border-top: 1px solid var(--line); margin-top: 6px; }
+.attr-table td { vertical-align: top; font-size: 13px; }
+.attr-table .attr-values div { word-break: break-all; }
+.attr-table .attr-values div + div { margin-top: 2px; }
+.attr-table tr.attr-used td { background: #f4f1ff; }
+.attr-table button.link { padding: 0 4px; }
+input.just-set { outline: 2px solid var(--indigo); transition: outline .3s; }
+.attr-box > p.muted.small:last-child { margin: 10px 0 0; }

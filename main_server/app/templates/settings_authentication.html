@@ -19,6 +19,38 @@
     </div>
     {% if test_result and test_result[0] == source %}
       <div class="flash {{ 'ok' if test_result[1] == 'ok' else 'error' }}">{{ test_result[2] }}</div>
+      {% set account = test_result[3] %}
+      {% if account and account.attributes %}
+      <div class="attr-box" data-source="{{ source }}">
+        <div class="row tight attr-head">
+          <b>Attributes of {{ request.form.get('test_username_' ~ source, '') }}</b>
+          <span class="muted small">— {{ account.attributes|length }} read from the server. Choose which ones fill the settings, then <b>Save</b>.</span>
+          <span class="spacer"></span>
+          <input type="search" class="attr-search" placeholder="Filter attributes" aria-label="Filter attributes">
+        </div>
+        <p class="muted small">Now: full name <b>{{ account.full_name or '—' }}</b> · e-mail <b>{{ account.email or '—' }}</b></p>
+        <div class="table-scroll"><table class="attr-table">
+          <thead><tr><th>Attribute</th><th>Value(s)</th><th>Use as</th></tr></thead>
+          <tbody>
+          {% for name, values in account.attributes %}
+            <tr data-attr="{{ name }}" data-search="{{ (name ~ ' ' ~ values|join(' '))|lower }}">
+              <td><code>{{ name }}</code> <span class="attr-tags"></span></td>
+              <td class="attr-values">{% for v in values %}<div>{{ v }}</div>{% endfor %}</td>
+              <td class="nowrap">{% if values != ['(hidden)'] %}
+                <button type="button" class="link small" data-use="first">first name</button>
+                <button type="button" class="link small" data-use="last">last name</button>
+                <button type="button" class="link small" data-use="email">e-mail</button>
+                {% if source == 'ldap' %}<button type="button" class="link small" data-use="login">login</button>{% endif %}
+              {% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+        <p class="muted small">Password attributes are hidden. {% if source == 'ldap' %}<i>login</i> sets the user filter to
+          <code>(attribute={username})</code>: the attribute people type at login.{% else %}People log in with
+          <code>sAMAccountName</code> (or their UPN); groups come from <code>memberOf</code>.{% endif %}</p>
+      </div>
+      {% endif %}
     {% endif %}
     <p class="muted small">{% if source == 'ldap' %}Without a username, only the connection and the service account are checked.
       With one, the login is checked and the user's groups are listed.{% else %}Logs in with this account and lists its groups.{% endif %}
@@ -63,7 +95,8 @@
       </label>
       {{ field('auth.ldap.user_base', 'Users base DN', 'ou=people,dc=example,dc=com') }}
       {{ field('auth.ldap.user_filter', 'User filter', '(uid={username})', '{username} = what is typed') }}
-      {{ field('auth.ldap.attr_name', 'Full name attribute', 'cn') }}
+      {{ field('auth.ldap.attr_first_name', 'First name attribute', 'givenName') }}
+      {{ field('auth.ldap.attr_last_name', 'Last name attribute', 'sn') }}
       {{ field('auth.ldap.attr_email', 'E-mail attribute', 'mail') }}
       {{ field('auth.ldap.group_base', 'Groups base DN', 'ou=groups,dc=example,dc=com', 'groups listed on the Groups page') }}
       {{ field('auth.ldap.group_filter', 'Group filter', '(member={dn})', '{dn} = user DN, {username}') }}
@@ -85,6 +118,9 @@
       </div>
       {{ field('auth.ad.domain', 'Domain', 'example.local') }}
       {{ field('auth.ad.base_dn', 'Base DN', 'DC=example,DC=local', 'empty = from the domain') }}
+      {{ field('auth.ad.attr_first_name', 'First name attribute', 'givenName') }}
+      {{ field('auth.ad.attr_last_name', 'Last name attribute', 'sn') }}
+      {{ field('auth.ad.attr_email', 'E-mail attribute', 'mail') }}
       {{ field('auth.ad.bind_user', 'Reader account', 'svc-intime@example.local', 'to list users and groups; any domain user') }}
       <label>Reader account password
         {% if v['auth.ad.bind_password'] %}<span class="muted">— saved; leave empty to keep it (removed if the reader account is emptied)</span>{% endif %}
@@ -117,6 +153,48 @@
 </form>
 {% endblock %}
 {% block scripts %}
+<script>
+(function () {
+  // Attributes of a test account: tag the ones the settings use, fill a setting from a row
+  const fields = {ldap: {first: 'auth_ldap_attr_first_name', last: 'auth_ldap_attr_last_name', email: 'auth_ldap_attr_email', login: 'auth_ldap_user_filter'},
+                  ad: {first: 'auth_ad_attr_first_name', last: 'auth_ad_attr_last_name', email: 'auth_ad_attr_email'}};
+  const labels = {first: 'first name', last: 'last name', email: 'e-mail', login: 'login', groups: 'groups'};
+  const defaults = {ldap: {first: 'givenName', last: 'sn', email: 'mail'}, ad: {first: 'givenName', last: 'sn', email: 'mail'}};
+  document.querySelectorAll('.attr-box').forEach(box => {
+    const src = box.dataset.source, map = fields[src];
+    const input = key => document.querySelector(`[name="${map[key]}"]`);
+    const used = key => {
+      if (!map[key]) return '';
+      const v = (input(key) || {}).value || '';
+      if (key === 'login') { const m = (v || '(uid={username})').match(/\(\s*([\w-]+)\s*=\s*\{username\}\s*\)/); return m ? m[1] : ''; }
+      return v.trim() || defaults[src][key];  // empty field = the default attribute
+    };
+    function tag() {
+      box.querySelectorAll('tr[data-attr]').forEach(tr => {
+        const a = tr.dataset.attr.toLowerCase(), tags = [];
+        ['first', 'last', 'email', 'login'].forEach(k => { if (used(k).toLowerCase() === a) tags.push(labels[k]); });
+        if (a === 'memberof' || (src === 'ad' && a === 'samaccountname')) tags.push(a === 'memberof' ? 'groups' : 'login');
+        tr.querySelector('.attr-tags').innerHTML = tags.map(t => `<span class="tag">${t}</span>`).join('');
+        tr.classList.toggle('attr-used', tags.length > 0);
+      });
+    }
+    box.addEventListener('click', e => {
+      const b = e.target.closest('[data-use]'); if (!b) return;
+      const key = b.dataset.use, attr = b.closest('tr').dataset.attr, el = input(key); if (!el) return;
+      el.value = key === 'login' ? `(${attr}={username})` : attr;
+      el.classList.add('just-set'); setTimeout(() => el.classList.remove('just-set'), 1500);
+      tag();
+    });
+    Object.values(map).forEach(n => { const el = document.querySelector(`[name="${n}"]`); if (el) el.addEventListener('input', tag); });
+    box.querySelector('.attr-search').addEventListener('input', e => {
+      const q = e.target.value.trim().toLowerCase();
+      box.querySelectorAll('tr[data-search]').forEach(tr => { tr.hidden = q && !tr.dataset.search.includes(q); });
+    });
+    tag();
+    box.scrollIntoView({block: 'nearest'});
+  });
+})();
+</script>
 <script>
 (function () {
   const select = document.getElementById('auth-source'), saved = {{ saved_source|tojson }};

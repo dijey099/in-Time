@@ -186,6 +186,8 @@ def run(db):
             conn.execute(text("INSERT INTO settings (key, value) VALUES ('auth.source', :v)"), {"v": source})
             log.warning("Authentication source set to %s (one source at a time now)", source)
         conn.execute(text("DELETE FROM settings WHERE key IN ('auth.ldap.enabled', 'auth.ad.enabled')"))
+        # The full name is now First name + Last name (two attributes)
+        conn.execute(text("DELETE FROM settings WHERE key IN ('auth.ldap.attr_name', 'auth.ad.attr_name')"))
     if "groups.source" in added:
         # Groups now come from the directory: a group linked to a directory group becomes that directory
         # group (matched by DN or name at the next sync); names are unique per source only; no role allowed

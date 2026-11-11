@@ -36,11 +36,13 @@ AUTH_DEFAULTS = {
     "auth.source": "local",
     "auth.ldap.url": "", "auth.ldap.start_tls": "0", "auth.ldap.verify_cert": "1",
     "auth.ldap.bind_dn": "", "auth.ldap.bind_password": "", "auth.ldap.user_base": "",
-    "auth.ldap.user_filter": "(uid={username})", "auth.ldap.attr_name": "cn", "auth.ldap.attr_email": "mail",
+    "auth.ldap.user_filter": "(uid={username})", "auth.ldap.attr_first_name": "givenName",
+    "auth.ldap.attr_last_name": "sn", "auth.ldap.attr_email": "mail",
     "auth.ldap.group_base": "", "auth.ldap.group_filter": "(|(member={dn})(uniqueMember={dn})(memberUid={username}))",
     "auth.ldap.auto_create": "1",
     "auth.ad.url": "", "auth.ad.bind_user": "", "auth.ad.bind_password": "", "auth.ad.group_base": "",
-    "auth.ad.user_base": "", "auth.ad.domain": "", "auth.ad.base_dn": "", "auth.ad.start_tls": "0",
+    "auth.ad.user_base": "", "auth.ad.attr_first_name": "givenName", "auth.ad.attr_last_name": "sn",
+    "auth.ad.attr_email": "mail", "auth.ad.domain": "", "auth.ad.base_dn": "", "auth.ad.start_tls": "0",
     "auth.ad.verify_cert": "1", "auth.ad.nested_groups": "1", "auth.ad.auto_create": "1",
 }
 BOOL_KEYS = {k for k, v in AUTH_DEFAULTS.items() if v in ("0", "1") and not k.endswith("password")}
@@ -270,8 +272,15 @@ def effective_role(user):
     return roles.highest([user.role] + [grp.role for grp in all_groups(user)])
 
 
+def effective_permissions(user):
+    """What the user may do: everything allowed by their own role or any of their groups' roles."""
+    if isinstance(user, BuiltinAdmin):
+        return roles.permissions("administrator")
+    return frozenset().union(*(roles.permissions(r) for r in [user.role] + [grp.role for grp in all_groups(user)]))
+
+
 def has_permission(user, perm):
-    return perm in roles.permissions(effective_role(user))
+    return perm in effective_permissions(user)
 
 
 # --------------------------------------------------------------------- login
@@ -424,7 +433,7 @@ def load_current_user():
     g.role = effective_role(g.user)
     if g.role is None:
         return False
-    g.perms = roles.permissions(g.role)
+    g.perms = effective_permissions(g.user)
     return True
 
 
@@ -464,14 +473,15 @@ def home_endpoint():
 
 # --------------------------------------------------------------- safeguards
 def check_admin_access_kept():
-    """Called before committing a change to accounts or groups: the person making it keeps their own
-    Administrator access (the built-in administrator of main.conf always keeps it)."""
+    """Called before committing a change to accounts, groups or authentication: the person making it
+    keeps all their own access (the built-in administrator of main.conf always keeps it)."""
     db.session.flush()
     me = g.get("user")
     if isinstance(me, User):
         db.session.refresh(me)
-        if not me.active or me.locked_at or effective_role(me) != "administrator":
-            raise ValueError("This change would remove your own Administrator access: ask another "
+        after = frozenset() if not me.active or me.locked_at else effective_permissions(me)
+        if not g.get("perms", frozenset()) <= after:
+            raise ValueError("This change would remove some of your own access: ask another "
                              "administrator to make it")
 
 
