@@ -19,7 +19,7 @@ working offline, and a central **main server** collects everything.
 
 ## Screenshots
 
-**Web admin console** (main server): dashboard with today's check-ins, users, relays and settings.
+**Web admin console** (main server): dashboard with today's check-ins, users, companies, relays and settings.
 
 ![Web admin console](main.png)
 
@@ -36,7 +36,7 @@ working offline, and a central **main server** collects everything.
 - **Main-server outages tolerated**: the relay caches users and settings, decides OK/KO locally and syncs check-ins when the main server is reachable again. Without **internet**, new check-ins are refused (no trusted time).
 - **Late / early detection**: IN after *max in time* or OUT before *min out time* is flagged KO. Global values with per-site overrides.
 - **Relay window**: today's check-ins with OK/KO, sync state per row (blue cloud = synced, grey = not synced), main server status (Reachable / Unreachable / Error), QR code for phones, the relay's public IP.
-- **Admin console**: companies and their departments, users (company and department, photo upload or camera capture, face check), relays (tokens, allowed IPs, site area on a map), settings, check-in history with filters and CSV export, snapshot and location of every check-in.
+- **Admin console**: companies and their departments, users (company and department, photo upload or camera capture, face check), relays (tokens, allowed IPs, site area on a map), settings, check-in history with filters and CSV export, snapshot and location of every check-in. Works on phones too (compact menu).
 - **Relay authentication**: bearer token + allowed IP/CIDR list + per-relay signing key; works behind nginx/Apache/Traefik and Cloudflare.
 - **Open source (AGPL-3.0) and self-hosted**: no license key, no activation, no limit on users or sites.
 
@@ -201,8 +201,9 @@ gunicorn -w 4 -b 127.0.0.1:8000 main:app
 ```
 
 The server refuses to start while `SECRET_KEY` (32+ characters) or `ADMIN_PASSWORD` (12+ characters) is
-empty or a default value. Tables are created (and new columns added) automatically. Log in, then
-**Relays → New relay**: enter the public IP(s) the site connects from (CIDR allowed, `*` = any, for
+empty or a default value. Tables are created (and new columns added) automatically. Log in, create your
+companies and their departments on the **Companies** page (users can only be added once their company has a
+department), then **Relays → New relay**: enter the public IP(s) the site connects from (CIDR allowed, `*` = any, for
 testing only; the relay window shows its public IP), pick the site area on the map, and copy the token,
 which is shown once. `flask --app main create-relay "SITE A" --ips 203.0.113.10` does the same from the
 shell (set the area afterwards with **Edit**).
@@ -210,6 +211,15 @@ shell (set the area afterwards with **Edit**).
 The **Relays** page lists each relay's name, allowed IPs, time zone and last seen time (with an
 online/offline dot and the IP it connects from). **Edit** opens all its settings in a pop-up: name, allowed IPs,
 time zone, max in / min out times, enabled, local relay, site area and **Generate new token**.
+
+The **Companies** page lists each company with its departments and their number of users. Companies and
+departments can be renamed; one that still has users can't be deleted (move its users first). On the user
+page, the Department list only offers the departments of the selected company, and the server refuses a
+department of another company. The Users page filters by company and department, and the check-ins CSV
+export has `company` and `department` columns.
+
+On a phone or small tablet (860 px wide or less), the console's pages are in the menu button at the top
+right, which shows the current page.
 
 The camera option on the user page needs the admin console to be served over HTTPS (or `localhost`).
 
