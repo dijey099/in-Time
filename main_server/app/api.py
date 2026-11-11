@@ -11,7 +11,7 @@ from flask import Blueprint, current_app, g, jsonify, request, send_from_directo
 from sqlalchemy.exc import IntegrityError
 
 from .auth import relay_required, verify_ed25519
-from .models import Checkin, Setting, User, db, tz_from_name, utcnow
+from .models import Checkin, Setting, Collaborator, db, tz_from_name, utcnow
 
 api_bp = Blueprint("api", __name__)
 
@@ -20,7 +20,7 @@ UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 JPEG_MAGIC = b"\xff\xd8\xff"
 
 # Fields of a check-in signed by the relay when it was made (same list on the relay, relay/crypto.py)
-CHECKIN_FIELDS = ("uuid", "seq", "relay_id", "user_id", "direction", "ts", "status", "reason", "distance",
+CHECKIN_FIELDS = ("uuid", "seq", "relay_id", "collaborator_id", "direction", "ts", "status", "reason", "distance",
                   "timezone", "snapshot_sha256")
 
 
@@ -30,12 +30,12 @@ def checkin_message(record: dict) -> bytes:
     fields = {k: record.get(k) for k in CHECKIN_FIELDS}
     if record.get("location") is not None:
         fields["location"] = record["location"]
-    return b"in-Time checkin v1\n" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
+    return b"in-Time checkin v2\n" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
 
 
 def _signed_record(item: dict, relay_id: str) -> dict:
     """The check-in as the relay signed it (values exactly as received)."""
-    return {"uuid": item.get("uuid"), "seq": item.get("seq"), "relay_id": relay_id, "user_id": item.get("user_id"),
+    return {"uuid": item.get("uuid"), "seq": item.get("seq"), "relay_id": relay_id, "collaborator_id": item.get("collaborator_id"),
             "direction": item.get("direction"), "ts": item.get("timestamp"), "status": item.get("status"),
             "reason": item.get("reason"), "distance": item.get("distance"), "timezone": item.get("timezone"),
             "snapshot_sha256": item.get("snapshot_sha256"), "location": item.get("location")}
@@ -118,25 +118,25 @@ def settings():
     return jsonify(data)
 
 
-@api_bp.get("/users")
+@api_bp.get("/collaborators")
 @relay_required
-def users():
-    """Full user list (including inactive ones so relays can drop them)."""
-    rows = User.query.order_by(User.id).all()
-    return jsonify(users=[u.to_api() for u in rows])
+def collaborators():
+    """Full collaborator list (including inactive ones so relays can drop them)."""
+    rows = Collaborator.query.order_by(Collaborator.id).all()
+    return jsonify(collaborators=[u.to_api() for u in rows])
 
 
-@api_bp.get("/users/<user_id>/photo")
+@api_bp.get("/collaborators/<collaborator_id>/photo")
 @relay_required
-def user_photo(user_id):
-    user = db.session.get(User, user_id)
-    if not user or not user.photo_path:
+def collaborator_photo(collaborator_id):
+    collaborator = db.session.get(Collaborator, collaborator_id)
+    if not collaborator or not collaborator.photo_path:
         return jsonify(error="not_found"), 404
-    return send_from_directory(current_app.config["PHOTOS_DIR"], user.photo_path.split("/")[-1])
+    return send_from_directory(current_app.config["PHOTOS_DIR"], collaborator.photo_path.split("/")[-1])
 
 
 def _face_check(uuid):
-    """Compare the snapshot with the user's photo now if possible (else the background worker does)."""
+    """Compare the snapshot with the collaborator's photo now if possible (else the background worker does)."""
     from .verify import engine, verify_checkin
     if not engine().ok:
         return
@@ -180,7 +180,7 @@ def _distance(value):
 @api_bp.post("/checkins")
 @relay_required
 def push_checkins():
-    """Body: {"checkins": [{uuid, seq, user_id, direction, timestamp, status, reason,
+    """Body: {"checkins": [{uuid, seq, collaborator_id, direction, timestamp, status, reason,
     distance, timezone, snapshot_sha256, location {lat, lng, accuracy}, signature, snapshot (base64 jpeg)}]}
 
     Every check-in is signed by the relay when it is made (its private key never leaves it): one
@@ -188,7 +188,7 @@ def push_checkins():
     ("bad_signature"). Check-ins are numbered by the relay: a missing number means some were
     deleted before they reached this server, and the next one is flagged "gap".
 
-    Each check-in is stored, then its snapshot is compared with the user's photo
+    Each check-in is stored, then its snapshot is compared with the collaborator's photo
     (server-side face check); a check-in without snapshot is flagged.
 
     The server never trusts the relay for what it can work out itself: the relay name comes from
@@ -228,9 +228,9 @@ def push_checkins():
             if Checkin.query.filter_by(uuid=uuid).first():
                 accepted.append(uuid)
                 continue
-            user_id = str(item["user_id"])
-            if not db.session.get(User, user_id):
-                raise ValueError("unknown user")
+            collaborator_id = str(item["collaborator_id"])
+            if not db.session.get(Collaborator, collaborator_id):
+                raise ValueError("unknown collaborator")
             direction = item["direction"]
             if direction not in ("IN", "OUT"):
                 raise ValueError("bad direction")
@@ -289,7 +289,7 @@ def push_checkins():
             db.session.add(
                 Checkin(
                     uuid=uuid,
-                    user_id=user_id,
+                    collaborator_id=collaborator_id,
                     relay_id=relay.id,
                     direction=direction,
                     timestamp=timestamp,

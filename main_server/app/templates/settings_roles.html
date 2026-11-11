@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Roles · Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+{% include "_settings_nav.html" %}
+<p class="muted">Built-in roles. Each one can do everything the role on its left can, plus more. Give a role to a user directly or
+  through a group: a user's role is the highest of the two.</p>
+<table class="roles-matrix">
+  <thead><tr><th>Permission</th>{% for name in roles.ORDER %}<th><span class="pill role-{{ name }}">{{ roles.ROLES[name][0] }}</span></th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for perm, text in roles.PERMISSIONS %}
+    <tr><td>{{ text }}</td>
+      {% for name in roles.ORDER %}<td class="center">{% if perm in roles.permissions(name) %}<span class="yes" aria-label="yes">✓</span>{% else %}<span class="no" aria-label="no">—</span>{% endif %}</td>{% endfor %}</tr>
+  {% endfor %}
+  <tr class="totals"><td>Active users with this role</td>{% for name in roles.ORDER %}<td class="center">{{ counts[name].users }}</td>{% endfor %}</tr>
+  <tr class="totals"><td>Groups with this role</td>{% for name in roles.ORDER %}<td class="center">{{ counts[name].groups }}</td>{% endfor %}</tr>
+  </tbody>
+</table>
+<div class="role-cards">
+  {% for name in roles.ORDER %}<div class="card"><span class="pill role-{{ name }}">{{ roles.ROLES[name][0] }}</span><p>{{ roles.ROLES[name][1] }}</p></div>{% endfor %}
+</div>
+<p class="muted small">Settings &gt; General (max in / min out times) is open to Technicians; Authentication, Users, Groups and
+  Roles only to Administrators.</p>
+{% endblock %}

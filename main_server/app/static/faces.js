@@ -1,5 +1,5 @@
 // Small wrapper around face-api.js used by the admin pages to compute the
-// 128-value face descriptor of a user's reference photo.
+// 128-value face descriptor of a collaborator's reference photo.
 const Faces = (() => {
   let loaded = null;
 

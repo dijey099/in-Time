@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Access denied{% endblock %}
+{% block content %}
+<h1>Access denied</h1>
+<div class="card narrow">
+  <p>Your role (<b>{{ role_label(current_role) }}</b>) doesn't allow this page or action.</p>
+  <p class="muted">Ask an administrator if you need it. This attempt is recorded in the logs.</p>
+  <p><a class="button secondary" href="{{ url_for('admin.dashboard') if can('dashboard.view') else url_for('admin.account') }}">Back</a></p>
+</div>
+{% endblock %}

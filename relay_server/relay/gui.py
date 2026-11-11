@@ -289,23 +289,23 @@ class MainWindow(QMainWindow):
             warnings.append(f"PC clock is {abs(mins):.0f} min {'ahead' if mins > 0 else 'behind'} "
                             f"(ignored: check-ins use the internet time)")
         if self.cfg.tz_from_pc:
-            warnings.append(f"Time zone taken from this PC ({tz}): set [time] timezone in relay.ini")
+            warnings.append(f"Time zone taken from this PC ({tz}): set [time] timezone in relay.conf")
         self._clock_warnings = warnings
 
     def _retry_rejected(self):
         self.db.retry_rejected()
         self.sync.wake()
 
-    def _photo(self, user_id):
-        if user_id not in self._photo_cache:
-            u = self.db.user(user_id)
+    def _photo(self, collaborator_id):
+        if collaborator_id not in self._photo_cache:
+            u = self.db.collaborator(collaborator_id)
             pm = QPixmap()
             data = self.db.photo_bytes(u) if u else None
             if data:
                 pm.loadFromData(data)
-            self._photo_cache[user_id] = QIcon(pm.scaled(44, 44, Qt.KeepAspectRatioByExpanding,
+            self._photo_cache[collaborator_id] = QIcon(pm.scaled(44, 44, Qt.KeepAspectRatioByExpanding,
                                                          Qt.SmoothTransformation)) if not pm.isNull() else QIcon()
-        return self._photo_cache[user_id]
+        return self._photo_cache[collaborator_id]
 
     def _refresh_public_ip(self):
         ip = None if self.public_ip.error else self.public_ip.value
@@ -329,7 +329,7 @@ class MainWindow(QMainWindow):
         settings = self.db.get("settings", {})
         self.sync_label.setText(
             f"Last successful sync: {last_ok}   ·   Max in time: {settings.get('max_in_time', '?')}"
-            f"   ·   Min out time: {settings.get('min_out_time', '?')}   ·   {len(self.db.users())} users cached")
+            f"   ·   Min out time: {settings.get('min_out_time', '?')}   ·   {len(self.db.collaborators())} collaborators cached")
         for w in self._clock_warnings:
             self.sync_label.setText(self.sync_label.text() + f"<br><b style='color:#d97706'>{w}</b>")
         for check in self.models or []:  # face models (phone page, relay recognition)
@@ -364,8 +364,8 @@ class MainWindow(QMainWindow):
                 QTableWidgetItem(ts.strftime("%H:%M:%S")),
                 QTableWidgetItem(r["timezone"] if (r["timezone"] or "").startswith("UTC")
                                  else f"{r['timezone'] or '—'} ({offset})"),
-                QTableWidgetItem(self._photo(r["user_id"]), ""),
-                QTableWidgetItem(r["user_id"]),
+                QTableWidgetItem(self._photo(r["collaborator_id"]), ""),
+                QTableWidgetItem(r["collaborator_id"]),
                 QTableWidgetItem(r["full_name"]),
                 QTableWidgetItem(r["relay_name"] or "—"),
                 QTableWidgetItem(r["direction"]),

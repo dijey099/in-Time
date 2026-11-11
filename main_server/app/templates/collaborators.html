@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Collaborators{% endblock %}
+{% block content %}
+<div class="row">
+  <h1>Collaborators</h1>
+  <form method="get" class="inline">
+    <input name="q" value="{{ q }}" placeholder="Search ID or name">
+    <select name="company" aria-label="Company" id="filter-company">
+      <option value="">All companies</option>
+      {% for c in companies %}<option value="{{ c.id }}" {{ 'selected' if c.id|string == company }}>{{ c.name }}</option>{% endfor %}
+      <option value="__none__" {{ 'selected' if company == '__none__' }}>No company / department</option>
+    </select>
+    <select name="department" aria-label="Department" id="filter-department">
+      <option value="">All departments</option>
+      {% for c in companies if c.departments %}
+      <optgroup label="{{ c.name }}" data-company="{{ c.id }}">
+        {% for d in c.departments %}<option value="{{ d.id }}" {{ 'selected' if d.id|string == dept }}>{{ d.name }}</option>{% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+    <button>Search</button>
+  </form>
+  <a class="button" href="{{ url_for('admin.collaborator_form') }}">+ New collaborator</a>
+</div>
+
+{% if not companies %}
+<div class="flash warn">No company yet: <a href="{{ url_for('admin.companies') }}">create a company and its departments</a> before adding collaborators.</div>
+{% elif invalid_count %}
+<div class="flash warn">{{ invalid_count }} collaborator(s) have no company or department.
+  <a href="{{ url_for('admin.collaborators', company='__none__') }}">Show them</a> and edit them to choose one.</div>
+{% endif %}
+
+{% set pending = collaborators|selectattr('photo_path')|rejectattr('face_model')|list %}
+{% set noface = collaborators|selectattr('photo_path')|selectattr('face_model')|rejectattr('face_embedding')|list %}
+{% if pending or noface %}
+<div class="flash warn">
+  {% if pending %}{{ pending|length }} photo(s) not checked by the server yet (done automatically within a minute).{% endif %}
+  {% if noface %}{{ noface|length }} collaborator(s) have no usable face in their photo and can't check in: {{ noface|map(attribute='id')|join(', ') }}.{% endif %}
+  {% if pending %}
+  <form method="post" action="{{ url_for('admin.collaborators_check_faces') }}" class="inline-block">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="secondary small">Check photos now</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
+<table>
+  <thead><tr><th>Photo</th><th>ID</th><th>Full name</th><th>Company</th><th>Department</th><th>Face data</th><th>Active</th><th></th></tr></thead>
+  <tbody>
+  {% for u in collaborators %}
+    <tr>
+      <td>{% if u.photo_path %}<img class="thumb" src="{{ url_for('admin.photo', name=u.photo_path.split('/')[-1]) }}?v={{ u.updated_at.timestamp()|int if u.updated_at else '' }}" alt="">{% endif %}</td>
+      <td>{{ u.id }}</td>
+      <td>{{ u.full_name }}</td>
+      <td>{% if u.company %}{{ u.company.name }}{% else %}<span class="pill ko">none</span>{% endif %}</td>
+      <td>{% if u.department %}{{ u.department.name }}{% else %}<span class="pill ko">none</span>{% endif %}</td>
+      <td>{% if u.face_embedding %}<span class="pill ok">yes</span>{% elif not u.photo_path %}<span class="pill ko">no photo</span>{% elif u.face_model %}<span class="pill ko" title="No usable face in the photo">no face</span>{% else %}<span class="pill">pending</span>{% endif %}</td>
+      <td>{{ 'yes' if u.active else 'no' }}</td>
+      <td class="actions">
+        <a href="{{ url_for('admin.collaborator_form', collaborator_id=u.id) }}">Edit</a>
+        <form method="post" action="{{ url_for('admin.collaborator_delete', collaborator_id=u.id) }}" onsubmit="return confirm('Delete {{ u.id }}?')">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">No collaborators</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+{% block scripts %}
+<script>
+// Department filter: only the departments of the chosen company
+(function () {
+  const company = document.getElementById('filter-company'), dept = document.getElementById('filter-department');
+  function sync() {
+    const id = /^\d+$/.test(company.value) ? company.value : '';
+    for (const g of dept.querySelectorAll('optgroup')) {
+      const show = !id || id === g.dataset.company;
+      g.hidden = !show; g.disabled = !show;
+    }
+    const sel = dept.selectedOptions[0];
+    if (sel && sel.parentElement.disabled) dept.value = '';
+    dept.disabled = company.value === '__none__';
+  }
+  company.addEventListener('change', sync);
+  sync();
+})();
+</script>
+{% endblock %}

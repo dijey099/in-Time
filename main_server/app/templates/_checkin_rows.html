@@ -1,12 +1,12 @@
 <table>
-  <thead><tr><th>Time</th><th>Timezone</th><th>User</th><th>Relay</th><th>Dir.</th><th>Status</th><th>Face check</th><th>Location</th><th>Snapshot</th></tr></thead>
+  <thead><tr><th>Time</th><th>Timezone</th><th>Collaborator</th><th>Relay</th><th>Dir.</th><th>Status</th><th>Face check</th><th>Location</th><th>Snapshot</th></tr></thead>
   <tbody>
   {% for c in checkins %}
     <tr>
       {% set lt = c.local_timestamp %}
       <td class="nowrap" title="Site time ({{ c.timezone or 'time zone not recorded: server time' }})">{{ lt.strftime('%d/%m/%Y %H:%M:%S') }}</td>
       <td class="nowrap">{% if c.timezone %}{{ c.timezone }} <small class="muted">{{ lt.strftime('%z')[:3] }}:{{ lt.strftime('%z')[3:] }}</small>{% else %}<span class="muted">—</span>{% endif %}</td>
-      <td><a href="{{ url_for('admin.checkins', user=c.user_id, **{'from': c.timestamp.astimezone().date().isoformat()}) }}">{{ c.user_id }}</a> · {{ c.user.full_name }}</td>
+      <td><a href="{{ url_for('admin.attendances', collaborator=c.collaborator_id, **{'from': c.timestamp.astimezone().date().isoformat()}) }}">{{ c.collaborator_id }}</a> · {{ c.collaborator.full_name }}</td>
       <td>{{ c.relay_label }}</td>
       <td><span class="pill {{ 'in' if c.direction == 'IN' else 'out' }}">{{ c.direction }}</span></td>
       <td class="nowrap"><span class="pill {{ 'ok' if c.status == 'OK' else 'ko' }}">{{ c.status }}</span>{% if c.reason %} <small>{{ c.reason }}</small>{% endif %}
@@ -15,13 +15,13 @@
         {%- elif c.time_check == 'gap' %} <span class="pill ko" title="Check-ins made on the relay just before this one never arrived (number {{ c.relay_seq }}): they may have been deleted on the relay PC">gap</span>{% endif %}</td>
       {% set vs = c.verify_status %}
       <td class="nowrap">
-        {%- if vs == 'match' %}<span class="pill ok" title="Snapshot matches the user's photo{% if c.verify_score is not none %}: {{ ([c.verify_score, 0]|max * 100)|round|int }}% similar{% endif %}">match</span>
-        {%- elif vs == 'mismatch' %}<span class="pill ko" title="Snapshot does NOT match the user's photo{% if c.verify_score is not none %}: only {{ ([c.verify_score, 0]|max * 100)|round|int }}% similar{% endif %}">mismatch</span>
+        {%- if vs == 'match' %}<span class="pill ok" title="Snapshot matches the collaborator's photo{% if c.verify_score is not none %}: {{ ([c.verify_score, 0]|max * 100)|round|int }}% similar{% endif %}">match</span>
+        {%- elif vs == 'mismatch' %}<span class="pill ko" title="Snapshot does NOT match the collaborator's photo{% if c.verify_score is not none %}: only {{ ([c.verify_score, 0]|max * 100)|round|int }}% similar{% endif %}">mismatch</span>
         {%- elif vs == 'no_face' %}<span class="pill ko" title="No usable face in the snapshot">no face</span>
-        {%- elif vs == 'replay' %}<span class="pill ko" title="The snapshot is the user's reference photo or a picture already used for another check-in{% if c.verify_score is not none %} ({{ ([c.verify_score, 0]|max * 100)|round|int }}% identical){% endif %}">replay</span>
+        {%- elif vs == 'replay' %}<span class="pill ko" title="The snapshot is the collaborator's reference photo or a picture already used for another check-in{% if c.verify_score is not none %} ({{ ([c.verify_score, 0]|max * 100)|round|int }}% identical){% endif %}">replay</span>
         {%- elif vs == 'no_snapshot' %}<span class="pill ko" title="The relay sent no snapshot">no snapshot</span>
         {%- elif vs == 'legacy' %}<span class="muted" title="Recorded before the face check existed">not checked</span>
-        {%- elif vs == 'no_reference' %}<span class="pill" title="The user has no usable photo: can't be checked">no photo</span>
+        {%- elif vs == 'no_reference' %}<span class="pill" title="The collaborator has no usable photo: can't be checked">no photo</span>
         {%- else %}<span class="muted" title="Checked in the background within a minute">pending</span>{% endif -%}
       </td>
       <td class="nowrap">

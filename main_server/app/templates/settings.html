@@ -2,6 +2,8 @@
 {% block title %}Settings{% endblock %}
 {% block content %}
 <h1>Settings</h1>
+{% include "_settings_nav.html" %}
+<h2>General</h2>
 <form method="post" class="card narrow">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   <label>Max in time — an IN after this is <b>late</b> (KO)

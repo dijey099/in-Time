@@ -3,7 +3,8 @@
 .env
 *.env
 !.env.example
-relay_server/relay.ini
+main_server/main.conf
+relay_server/relay.conf
 main_server/admin_login.lock
 
 # ------------------------------------------------- personal / runtime data

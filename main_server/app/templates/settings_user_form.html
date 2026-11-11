@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit ' ~ user.username if user else 'New user' }} · Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+{% include "_settings_nav.html" %}
+<h2>{{ 'Edit user ' ~ user.username if user else 'New user' }}</h2>
+<form method="post" class="card narrow" id="user-form" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  {% if not user %}
+    <p>Account type: <span class="pill src-{{ auth_source }}">{{ sources[auth_source] }}</span>
+      <span class="muted small">— the authentication source in use (<a href="{{ url_for('admin.settings_authentication') }}">Authentication</a>)</span></p>
+    <label>Username <input name="username" required maxlength="100" pattern="[A-Za-z0-9._@\\\-]{1,100}" value="{{ request.form.username or '' }}"
+           placeholder="e.g. jdoe"></label>
+    {% if auth_source != 'local' %}
+    <p class="muted small">Use the {{ sources[auth_source] }} login name{{ ' (sAMAccountName)' if auth_source == 'ad' }}.
+      The password is checked by the directory; name and e-mail are filled at the first login. Creating the account
+      here is optional when accounts are created at first login: use it to give a role before then.</p>
+    {% endif %}
+  {% else %}
+    <p>Username <b>{{ user.username }}</b> · <span class="pill src-{{ user.source }}">{{ sources[user.source] }}</span>
+      {% if user.last_login_at %}<span class="muted"> · last login {{ user.last_login_at.astimezone().strftime('%d/%m/%Y %H:%M') }}{{ ' from ' ~ user.last_login_ip if user.last_login_ip }}</span>{% endif %}</p>
+  {% endif %}
+  <label>Full name <input name="full_name" maxlength="200" value="{{ request.form.full_name or (user.full_name if user and user.full_name else '') }}"></label>
+  <label>E-mail <input name="email" type="email" maxlength="200" value="{{ request.form.email or (user.email if user and user.email else '') }}"></label>
+  {% set cur_role = request.form.role if request.method == 'POST' else (user.role if user else '') %}
+  <label>Own role
+    <select name="role">
+      <option value="">None — only the roles of the groups</option>
+      {% for key, label in roles_choices %}<option value="{{ key }}" {{ 'selected' if cur_role == key }}>{{ label }}</option>{% endfor %}
+    </select></label>
+  {% if (user and user.source == 'local') or (not user and auth_source == 'local') %}
+  <fieldset>
+    <legend>Groups</legend>
+    {% set cur_groups = request.form.getlist('groups') if request.method == 'POST' else (user.groups|map(attribute='id')|map('string')|list if user else []) %}
+    {% for grp in groups %}
+      <label class="check"><input type="checkbox" name="groups" value="{{ grp.id }}" {{ 'checked' if grp.id|string in cur_groups }}>
+        {{ grp.name }} <span class="muted">— {{ role_label(grp.role) }}</span></label>
+    {% else %}
+      <p class="muted">No group yet (<a href="{{ url_for('admin.settings_groups') }}">create one</a>).</p>
+    {% endfor %}
+  </fieldset>
+  {% else %}
+  <fieldset>
+    <legend>Directory groups</legend>
+    {% if user and user.directory_groups %}
+      <p class="muted small">At the last login ({{ sources[user.source] }}). Roles are set on <a href="{{ url_for('admin.settings_groups') }}">Groups</a>.</p>
+      {% for grp in mapped %}<span class="tag" title="{{ grp.directory_group }}">{{ grp.name }} · {{ role_label(grp.role) if grp.role else 'no role' }}</span>{% endfor %}
+    {% else %}
+      <p class="muted small">Read from {{ sources[user.source if user else auth_source] }} at each login: none known yet.</p>
+    {% endif %}
+  </fieldset>
+  {% endif %}
+  {% if user and user.directory_disabled %}
+  <div class="flash error">This account is disabled in {{ sources[user.source] }}.</div>
+  {% endif %}
+  {% if user and user.locked_at %}
+  <div class="flash error">Locked on {{ user.locked_at.astimezone().strftime('%d/%m/%Y %H:%M') }} after too many wrong passwords.
+    <button form="unlock-form" class="small">Unlock</button></div>
+  {% endif %}
+  {% if user %}<p>Role now: {% if effective %}<span class="pill role-{{ effective }}">{{ role_label(effective) }}</span>{% else %}<span class="pill ko">none — can't log in</span>{% endif %}</p>{% endif %}
+  <label class="check"><input type="checkbox" name="active" {{ 'checked' if (request.form.active if request.method == 'POST' else (not user or user.active)) }}> Active (can log in)</label>
+  {% if (not user and auth_source == 'local') or (user and user.source == 'local') %}
+  <fieldset id="password-fields">
+    <legend>{{ 'Password' if not user else 'Reset password' }}</legend>
+    {% if user %}<p class="muted small">Leave empty to keep the current password.</p>{% endif %}
+    <label>Password <span class="muted">— {{ password_min }}+ characters, letters and digits</span>
+      <input name="password" type="password" autocomplete="new-password" minlength="{{ password_min }}"></label>
+    <label>Repeat password <input name="password2" type="password" autocomplete="new-password"></label>
+  </fieldset>
+  {% endif %}
+  <div class="row">
+    <button>Save</button>
+    <a href="{{ url_for('admin.settings_users') }}">Cancel</a>
+  </div>
+</form>
+{% if user and user.locked_at %}
+<form method="post" id="unlock-form" action="{{ url_for('admin.settings_user_unlock', user_id=user.id) }}">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ url_for('admin.settings_user_form', user_id=user.id) }}">
+</form>
+{% endif %}
+{% endblock %}
+

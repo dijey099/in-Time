@@ -3,7 +3,7 @@
 Every `sync_interval` seconds (or immediately when woken up after a new check-in):
   1. ping            -> Main server status: REACHABLE / UNREACHABLE / ERROR
   2. settings        -> cached locally (max in time, min out time)
-  3. users           -> cached locally with their photos (face data is computed from them here)
+  3. collaborators   -> cached locally with their photos (face data is computed from them here)
   4. pending checkins-> pushed in batches; kept locally until accepted
 
 Every request is signed with the relay's identity key (X-Relay-Time / X-Relay-Signature), and each
@@ -52,11 +52,11 @@ class SyncState:
 
 
 class SyncWorker(threading.Thread):
-    def __init__(self, cfg: Config, db: Database, clock=None, on_users_synced=None, machine_id=None,
+    def __init__(self, cfg: Config, db: Database, clock=None, on_collaborators_synced=None, machine_id=None,
                  on_settings=None, identity=None):
         super().__init__(daemon=True, name="sync")
         self.cfg, self.db, self.clock, self.identity = cfg, db, clock, identity
-        self.on_users_synced = on_users_synced  # recompute face data of new/changed photos
+        self.on_collaborators_synced = on_collaborators_synced  # recompute face data of new/changed photos
         self.on_settings = on_settings          # settings from the main server (e.g. min similarity)
         self.state = SyncState(site_name=db.get("site_name", ""))
         self._wake = threading.Event()
@@ -133,7 +133,7 @@ class SyncWorker(threading.Thread):
         now = self._now()
         self.state.update(last_attempt=now)
         if not self.cfg.token:
-            self.state.update(status=ERROR, message="No token configured in relay.ini")
+            self.state.update(status=ERROR, message="No token configured in relay.conf")
             return
         try:
             info = self._call("GET", "/ping", timeout=8).json()
@@ -143,9 +143,9 @@ class SyncWorker(threading.Thread):
             self.db.set("settings", settings)
             if self.on_settings:
                 self.on_settings(settings)
-            self._sync_users()
-            if self.on_users_synced:
-                self.on_users_synced()
+            self._sync_collaborators()
+            if self.on_collaborators_synced:
+                self.on_collaborators_synced()
             pushed = self._push_checkins()
             self.state.update(status=REACHABLE, last_ok=self._now(),
                               message=f"Synchronised ({pushed} check-in(s) sent)" if pushed else "Synchronised")
@@ -159,13 +159,13 @@ class SyncWorker(threading.Thread):
             log.exception("Sync failed")
             self.state.update(status=ERROR, message=f"Unexpected error: {exc}")
 
-    def _sync_users(self):
-        users = self._call("GET", "/users").json()["users"]
-        for u in users:
+    def _sync_collaborators(self):
+        collaborators = self._call("GET", "/collaborators").json()["collaborators"]
+        for u in collaborators:
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(u.get("id", ""))):
-                log.warning("Ignored user %r: invalid ID", u.get("id"))
+                log.warning("Ignored collaborator %r: invalid ID", u.get("id"))
                 continue
-            local = self.db.user(u["id"])
+            local = self.db.collaborator(u["id"])
             photo_file = local["photo_file"] if local else None
             photo_ext = None
             photo_missing = not self.db.photo_exists(local)
@@ -175,17 +175,17 @@ class SyncWorker(threading.Thread):
                     photo_file, photo_ext = got
             elif not u.get("has_photo"):
                 photo_file = None
-            self.db.upsert_user(u, photo_file, photo_ext)
-        self.db.deactivate_missing_users([u["id"] for u in users])
-        self.db.set("users_version", max((u["updated_at"] or "" for u in users), default="") + f"#{len(users)}")
+            self.db.upsert_collaborator(u, photo_file, photo_ext)
+        self.db.deactivate_missing_collaborators([u["id"] for u in collaborators])
+        self.db.set("collaborators_version", max((u["updated_at"] or "" for u in collaborators), default="") + f"#{len(collaborators)}")
 
-    def _download_photo(self, user_id):
+    def _download_photo(self, collaborator_id):
         try:
-            r = self._call("GET", f"/users/{user_id}/photo", timeout=30)
+            r = self._call("GET", f"/collaborators/{collaborator_id}/photo", timeout=30)
         except requests.HTTPError:
             return None
         ext = ".png" if "png" in r.headers.get("Content-Type", "") else ".jpg"
-        return self.db.save_photo(user_id, r.content, ext), ext
+        return self.db.save_photo(collaborator_id, r.content, ext), ext
 
     def _push_checkins(self):
         total = 0
@@ -196,7 +196,7 @@ class SyncWorker(threading.Thread):
             payload = []
             for c in batch:
                 # exactly the values the relay signed when the check-in was made
-                item = {k: c[k] for k in ("uuid", "seq", "user_id", "direction", "status", "reason", "distance",
+                item = {k: c[k] for k in ("uuid", "seq", "collaborator_id", "direction", "status", "reason", "distance",
                                           "timezone", "snapshot_sha256", "signature")}
                 item["timestamp"] = c["ts"]
                 if c.get("location") is not None:  # GPS location of the phone (signed)

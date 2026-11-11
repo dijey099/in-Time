@@ -1,5 +1,5 @@
 # PyInstaller build of the relay: pyinstaller --clean --noconfirm relay.spec
-# Produces one file, dist/start_relay(.exe), that must sit next to relay.ini.
+# Produces one file, dist/start_relay(.exe), that must sit next to relay.conf.
 # -*- mode: python -*-
 import sys
 

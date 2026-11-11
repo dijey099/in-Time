@@ -120,7 +120,7 @@
     if (!navigator.geolocation) {
       throw new Error('This browser cannot share its location: check-in is not possible.');
     }
-    // re-start the watch as soon as the user re-allows location in the browser settings
+    // re-start the watch as soon as the collaborator re-allows location in the browser settings
     if (navigator.permissions && navigator.permissions.query) {
       try {
         const perm = await navigator.permissions.query({name: 'geolocation'});
@@ -148,7 +148,7 @@
   }
 
   function snapshot() {
-    // true orientation (not mirrored like the preview): the relay compares it with the user's photo
+    // true orientation (not mirrored like the preview): the relay compares it with the collaborator's photo
     const w = Math.min(640, video.videoWidth), h = Math.round(video.videoHeight * (w / video.videoWidth));
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
@@ -226,26 +226,26 @@
   }
 
   function showConfirm(res) {
-    const user = res.user, suggested = res.direction;
-    $('c-name').textContent = user.full_name;
-    $('c-id').textContent = user.id;
+    const collaborator = res.collaborator, suggested = res.direction;
+    $('c-name').textContent = collaborator.full_name;
+    $('c-id').textContent = collaborator.id;
     $('c-photo').src = res.photo;
     document.querySelectorAll('.dir').forEach((b) => {
       b.classList.toggle('suggested', b.dataset.dir === suggested);
-      b.onclick = () => submit(user, b.dataset.dir, res.token);
+      b.onclick = () => submit(collaborator, b.dataset.dir, res.token);
     });
     $('c-cancel').onclick = reset;
     $('confirm').classList.remove('hidden');
     let left = AUTO_CONFIRM_S;
     const tick = () => {
       $('c-countdown').textContent = `Checking ${suggested} automatically in ${left}s`;
-      if (left-- <= 0) submit(user, suggested, res.token);
+      if (left-- <= 0) submit(collaborator, suggested, res.token);
     };
     tick();
     countdownTimer = setInterval(tick, 1000);
   }
 
-  async function submit(user, direction, token) {
+  async function submit(collaborator, direction, token) {
     clearInterval(countdownTimer);
     $('confirm').classList.add('hidden');
     if (!locationOk()) {

@@ -17,17 +17,20 @@ WEAK_VALUES = {"", "admin", "change-me", "password", "test-key", "replace-with-a
 
 
 def check_config(cfg):
+    if not cfg.get("CONF_FOUND"):
+        raise ConfigError(f"{cfg.get('CONF_FILE')} not found: create it from main.conf.example "
+                          "(cp main.conf.example main.conf) and set its values")
     if cfg.get("TESTING"):
         return
     secret = cfg.get("SECRET_KEY") or ""
     if secret in WEAK_VALUES or len(secret) < 32:
-        raise ConfigError("SECRET_KEY in main_server/.env is missing, a default value or shorter than 32 "
+        raise ConfigError("secret_key in [security] of main_server/main.conf is missing, a default value or shorter than 32 "
                           "characters. Generate one with: python3 -c \"import secrets; "
                           "print(secrets.token_urlsafe(48))\"")
     password = cfg.get("ADMIN_PASSWORD") or ""
     if password in WEAK_VALUES or len(password) < 12 or password == cfg.get("ADMIN_USERNAME"):
-        raise ConfigError("ADMIN_PASSWORD in main_server/.env is missing, a default value or shorter than 12 "
-                          "characters: set a strong password.")
+        raise ConfigError("password in [admin] of main_server/main.conf is missing, a default value or shorter than 12 "
+                          "characters (or the same as the username): set a strong password.")
 
 
 def _networks(values):
@@ -93,8 +96,9 @@ def create_app(config_object=Config):
     register_cli(app)
 
     with app.app_context():
+        from .migrate import rename_tables, run as migrate
+        rename_tables(db)  # before create_all: renamed tables keep their data
         db.create_all()
-        from .migrate import run as migrate
         migrate(db)
 
     # face-api.js models used by the admin pages (downloaded once if missing)
@@ -102,7 +106,7 @@ def create_app(config_object=Config):
     app.extensions["face_models"] = models = ModelStatus(Path(app.static_folder) / "vendor" / "face-api")
     models.start_download()
 
-    # Server-side face check (OpenCV): user photos and check-in snapshots
+    # Server-side face check (OpenCV): collaborator photos and check-in snapshots
     from .face_engine import FaceEngine
     from .verify import start_worker
     app.extensions["face_engine"] = FaceEngine(app.config["FACE_MODELS_DIR"],

@@ -90,22 +90,22 @@ def create_web_app(cfg: Config, db: Database, clock, identifier, on_new_checkin=
         if jpeg is None:
             return jsonify(error="Missing or invalid snapshot"), 400
         try:
-            user, sim = identifier.identify(jpeg)
+            collaborator, sim = identifier.identify(jpeg)
         except NoFace as exc:
             return jsonify(match=False, reason="no_face", message=str(exc))
-        if user is None:
+        if collaborator is None:
             log.info("Face not recognised (best similarity %.2f)", sim)
             return jsonify(match=False, reason="unknown", message="Face not recognised")
-        token = identifier.issue(user, sim, jpeg, request.remote_addr)
-        last = db.last_checkin(user["id"], now.date())
-        return jsonify(match=True, token=token, user={"id": user["id"], "full_name": user["full_name"]},
+        token = identifier.issue(collaborator, sim, jpeg, request.remote_addr)
+        last = db.last_checkin(collaborator["id"], now.date())
+        return jsonify(match=True, token=token, collaborator={"id": collaborator["id"], "full_name": collaborator["full_name"]},
                        direction=suggest_direction(last), photo=f"api/photo/{token}")
 
     @app.get("/api/photo/<token>")
     def recognised_photo(token):
         """Reference photo of the person just recognised (only with their token)."""
         t = identifier.peek(token, request.remote_addr)
-        u = db.user(t["user_id"]) if t else None
+        u = db.collaborator(t["collaborator_id"]) if t else None
         data = db.photo_bytes(u) if u else None
         if not data:
             abort(404)
@@ -127,11 +127,11 @@ def create_web_app(cfg: Config, db: Database, clock, identifier, on_new_checkin=
         t = identifier.consume(str(data.get("token", "")), request.remote_addr)
         if t is None:
             return jsonify(error="Recognition expired: look at the camera again"), 403
-        user = db.user(t["user_id"])
-        if not user or not user["active"]:
-            return jsonify(error="Unknown user"), 404
+        collaborator = db.collaborator(t["collaborator_id"])
+        if not collaborator or not collaborator["active"]:
+            return jsonify(error="Unknown collaborator"), 404
 
-        last = db.last_checkin(user["id"], now.date())
+        last = db.last_checkin(collaborator["id"], now.date())
         direction = data.get("direction") or suggest_direction(last)
         if direction not in ("IN", "OUT"):
             return jsonify(error="Bad direction"), 400
@@ -145,15 +145,15 @@ def create_web_app(cfg: Config, db: Database, clock, identifier, on_new_checkin=
         # numbered, signed with the relay's key and stored encrypted; the snapshot is the picture the
         # relay recognised, never one sent afterwards
         db.create_checkin(
-            uuid=cid, user_id=user["id"], full_name=user["full_name"], direction=direction,
+            uuid=cid, collaborator_id=collaborator["id"], full_name=collaborator["full_name"], direction=direction,
             ts=now.isoformat(timespec="seconds"), status=status, reason=reason,
             # face distance = 1 - similarity (lower = closer)
             distance=round(1 - t["similarity"], 4), timezone=cfg.tz_name,
             relay_name=db.get("site_name", "") or socket.gethostname(), snapshot=t["snapshot"], location=loc)
-        log.info("Check-in %s %s %s %s (similarity %.2f, location %.6f,%.6f ±%.0fm)", user["id"], direction,
+        log.info("Check-in %s %s %s %s (similarity %.2f, location %.6f,%.6f ±%.0fm)", collaborator["id"], direction,
                  status, reason or "", t["similarity"], loc["lat"], loc["lng"], loc["accuracy"])
         on_new_checkin()
-        return jsonify(ok=True, checkin={"user_id": user["id"], "full_name": user["full_name"],
+        return jsonify(ok=True, checkin={"collaborator_id": collaborator["id"], "full_name": collaborator["full_name"],
                                          "direction": direction, "status": status, "reason": reason,
                                          "time": now.strftime("%H:%M")}), 201
 

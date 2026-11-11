@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 # check-in can't be taken from a server someone controls.
 TIME_URLS = ("https://www.google.com/generate_204", "https://www.cloudflare.com/cdn-cgi/trace",
              "https://www.microsoft.com/")
-# Face match: similarity required between the snapshot and the user's photo, at least this
+# Face match: similarity required between the snapshot and the collaborator's photo, at least this
 MIN_SIMILARITY_FLOOR = 0.363
 
 
@@ -22,7 +22,7 @@ def bundle_dir() -> Path:
 
 
 def app_dir() -> Path:
-    """Folder containing relay.ini and data/ (works for PyInstaller builds too)."""
+    """Folder containing relay.conf and data/ (works for PyInstaller builds too)."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
@@ -47,7 +47,7 @@ class Config:
     tz: tzinfo
     tz_name: str
     tz_from_pc: bool  # True when [time] timezone is not set (PC setting used)
-    ini_path: Path | None = None
+    conf_path: Path | None = None
 
     @property
     def db_path(self) -> Path:
@@ -72,10 +72,10 @@ class Config:
 
 def load_config(path: Path | None = None) -> Config:
     base = app_dir()
-    path = path or base / "relay.ini"
+    path = path or base / "relay.conf"
     cp = configparser.ConfigParser()
     if not path.exists():
-        raise SystemExit(f"Configuration file not found: {path}\nCopy relay.ini.example to relay.ini and edit it.")
+        raise SystemExit(f"Configuration file not found: {path}\nCopy relay.conf.example to relay.conf and edit it.")
     cp.read(path, encoding="utf-8")
 
     verify = cp.get("main_server", "verify_ssl", fallback="true").strip()
@@ -95,14 +95,14 @@ def load_config(path: Path | None = None) -> Config:
         try:
             tz = ZoneInfo(tz_name)
         except (ZoneInfoNotFoundError, ValueError):
-            raise SystemExit(f"Unknown time zone in relay.ini: {tz_name!r} (example: Indian/Antananarivo)")
+            raise SystemExit(f"Unknown time zone in relay.conf: {tz_name!r} (example: Indian/Antananarivo)")
     else:
         tz = datetime.now().astimezone().tzinfo  # falls back to the PC setting (fixed offset)
         off = int(datetime.now(tz).utcoffset().total_seconds() // 60)
         tz_name = f"UTC{'+' if off >= 0 else '-'}{abs(off) // 60:02d}:{abs(off) % 60:02d}"
     if cp.get("time", "urls", fallback="").strip():
         logging.getLogger("relay.config").warning(
-            "[time] urls in relay.ini is ignored: the trusted time sources are built into the relay")
+            "[time] urls in relay.conf is ignored: the trusted time sources are built into the relay")
 
     cfg = Config(
         main_url=cp.get("main_server", "url").rstrip("/"),
@@ -130,5 +130,5 @@ def load_config(path: Path | None = None) -> Config:
     )
     for d in (cfg.data_dir, cfg.photos_dir, cfg.snapshots_dir, cfg.certs_dir):
         d.mkdir(parents=True, exist_ok=True)
-    cfg.ini_path = path
+    cfg.conf_path = path
     return cfg

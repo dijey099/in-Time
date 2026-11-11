@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Authentication · Settings{% endblock %}
+{% macro check(key, label, hint='') -%}
+  <label class="check"><input type="checkbox" name="{{ key|replace('.', '_') }}" {{ 'checked' if v[key] == '1' }}> {{ label }}
+    {%- if hint %} <span class="muted">— {{ hint }}</span>{% endif %}</label>
+{%- endmacro %}
+{% macro field(key, label, placeholder='', hint='') -%}
+  <label>{{ label }}{% if hint %} <span class="muted">— {{ hint }}</span>{% endif %}
+    <input name="{{ key|replace('.', '_') }}" value="{{ v[key] }}" placeholder="{{ placeholder }}" maxlength="500" autocomplete="off"></label>
+{%- endmacro %}
+{% macro test_box(source) %}
+  <div class="test-box">
+    <b>Test these settings</b> <span class="muted small">— uses the values above, before saving them</span>
+    <div class="row tight">
+      <label>Test username <input name="test_username_{{ source }}" autocomplete="off" placeholder="{{ 'optional' if source == 'ldap' else 'required' }}"
+             value="{{ request.form.get('test_username_' ~ source, '') if test_result and test_result[0] == source else '' }}"></label>
+      <label>Password <input name="test_password_{{ source }}" type="password" autocomplete="new-password"></label>
+      <button class="secondary" name="action" value="test-{{ source }}" formnovalidate>Test</button>
+    </div>
+    {% if test_result and test_result[0] == source %}
+      <div class="flash {{ 'ok' if test_result[1] == 'ok' else 'error' }}">{{ test_result[2] }}</div>
+    {% endif %}
+    <p class="muted small">{% if source == 'ldap' %}Without a username, only the connection and the service account are checked.
+      With one, the login is checked and the user's groups are listed.{% else %}Logs in with this account and lists its groups.{% endif %}
+      The password is not stored or logged.</p>
+  </div>
+{% endmacro %}
+{% block content %}
+<h1>Settings</h1>
+{% include "_settings_nav.html" %}
+
+<form method="post" class="card auth-form" id="auth-form" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <label class="source-pick">Authentication source
+    <select name="auth_source" id="auth-source">
+      <option value="local" {{ 'selected' if v['auth.source'] == 'local' }}>Local</option>
+      <option value="ldap" {{ 'selected' if v['auth.source'] == 'ldap' }}>LDAP</option>
+      <option value="ad" {{ 'selected' if v['auth.source'] == 'ad' }}>Active Directory</option>
+    </select></label>
+
+  <section data-source="local">
+    <h2>Local</h2>
+    <p>Nothing to set up. Accounts are created on the <a href="{{ url_for('admin.settings_users') }}">Users</a> page, with a
+      password stored here (hashed; 12+ characters, letters and digits). Each person can change it from their account
+      page (their name, top right).</p>
+  </section>
+
+  <section data-source="ldap">
+    <h2>LDAP</h2>
+    <p class="muted">OpenLDAP, 389 Directory Server, FreeIPA... The account is found with the service account (or
+      anonymously), then its password is checked by the server.</p>
+    <div class="grid2">
+      {{ field('auth.ldap.url', 'Server URL', 'ldaps://ldap.example.com:636') }}
+      <div class="checks">
+        {{ check('auth.ldap.start_tls', 'StartTLS', 'with ldap://') }}
+        {{ check('auth.ldap.verify_cert', 'Verify the server certificate') }}
+      </div>
+      {{ field('auth.ldap.bind_dn', 'Service account (bind DN)', 'cn=in-time,ou=services,dc=example,dc=com', 'empty = anonymous') }}
+      <label>Service account password
+        {% if secret_unreadable %}<span class="error">— can't be read (SECRET_KEY changed): enter it again</span>
+        {% elif v['auth.ldap.bind_password'] %}<span class="muted">— saved; leave empty to keep it (removed if the bind DN is emptied)</span>{% endif %}
+        <input name="auth_ldap_bind_password" type="password" autocomplete="new-password">
+      </label>
+      {{ field('auth.ldap.user_base', 'Users base DN', 'ou=people,dc=example,dc=com') }}
+      {{ field('auth.ldap.user_filter', 'User filter', '(uid={username})', '{username} = what is typed') }}
+      {{ field('auth.ldap.attr_name', 'Full name attribute', 'cn') }}
+      {{ field('auth.ldap.attr_email', 'E-mail attribute', 'mail') }}
+      {{ field('auth.ldap.group_base', 'Groups base DN', 'ou=groups,dc=example,dc=com', 'groups listed on the Groups page') }}
+      {{ field('auth.ldap.group_filter', 'Group filter', '(member={dn})', '{dn} = user DN, {username}') }}
+    </div>
+    {{ check('auth.ldap.auto_create', 'Accounts not read yet can log in', 'new in LDAP since the last read, when one of their groups has a role') }}
+    {{ test_box('ldap') }}
+  </section>
+
+  <section data-source="ad">
+    <h2>Active Directory</h2>
+    <p class="muted">People log in with their Windows account: <i>alice</i>, <i>EXAMPLE\alice</i> or <i>alice@example.local</i>.
+      Their password is checked by a domain controller. The reader account is only used to list the users and groups
+      (Users and Groups pages).</p>
+    <div class="grid2">
+      {{ field('auth.ad.url', 'Domain controller URL', 'ldaps://dc1.example.local:636') }}
+      <div class="checks">
+        {{ check('auth.ad.start_tls', 'StartTLS', 'with ldap://') }}
+        {{ check('auth.ad.verify_cert', 'Verify the server certificate') }}
+      </div>
+      {{ field('auth.ad.domain', 'Domain', 'example.local') }}
+      {{ field('auth.ad.base_dn', 'Base DN', 'DC=example,DC=local', 'empty = from the domain') }}
+      {{ field('auth.ad.bind_user', 'Reader account', 'svc-intime@example.local', 'to list users and groups; any domain user') }}
+      <label>Reader account password
+        {% if v['auth.ad.bind_password'] %}<span class="muted">— saved; leave empty to keep it (removed if the reader account is emptied)</span>{% endif %}
+        <input name="auth_ad_bind_password" type="password" autocomplete="new-password">
+      </label>
+      {{ field('auth.ad.user_base', 'Users base DN', 'OU=Staff,DC=example,DC=local', 'empty = the whole domain') }}
+      {{ field('auth.ad.group_base', 'Groups base DN', 'OU=Groups,DC=example,DC=local', 'empty = the whole domain') }}
+    </div>
+    {{ check('auth.ad.nested_groups', 'Include nested groups', 'a member of a group inside a linked group gets its role') }}
+    {{ check('auth.ad.auto_create', 'Accounts not read yet can log in', 'new in AD since the last read, when one of their groups has a role') }}
+    {{ test_box('ad') }}
+  </section>
+
+  <p class="muted small" data-source="ldap ad">The directory's accounts and groups are listed on <a href="{{ url_for('admin.settings_users') }}">Users</a>
+    and <a href="{{ url_for('admin.settings_groups') }}">Groups</a>, where you give the groups roles. A person's groups are read again at every login.</p>
+
+  {% for key, label in [('local', 'Local'), ('ldap', 'LDAP'), ('ad', 'Active Directory')] %}
+    {% set others = counts.items()|rejectattr(0, 'equalto', key)|map(attribute=1)|sum %}
+    {% if others %}<p class="flash error" data-source="{{ key }}" data-switch>{{ others }} account(s) of another source won't be able to log in
+      with {{ label }} authentication (they are hidden, and come back if their source is chosen again).</p>{% endif %}
+  {% endfor %}
+
+  <div class="row">
+    <button name="action" value="save">Save</button>
+    <span class="muted small" id="unsaved" hidden>Not saved yet: the console still uses
+      {{ {'local': 'Local', 'ldap': 'LDAP', 'ad': 'Active Directory'}[saved_source] }} authentication.</span>
+  </div>
+  <p class="muted small">After {{ max_failures }} wrong passwords within {{ lock_minutes }} minutes an account is locked until an
+    administrator unlocks it (Users); the built-in administrator is only paused for {{ lock_minutes }} minutes.</p>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const select = document.getElementById('auth-source'), saved = {{ saved_source|tojson }};
+  function show() {
+    const src = select.value;
+    document.querySelectorAll('#auth-form [data-source]').forEach(el => {
+      const on = el.dataset.source.split(' ').includes(src);
+      el.hidden = !on || (el.hasAttribute('data-switch') && src === saved);
+    });
+    document.getElementById('unsaved').hidden = src === saved;
+  }
+  select.addEventListener('change', show);
+  show();
+})();
+</script>
+{% endblock %}

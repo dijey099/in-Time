@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Users · Settings{% endblock %}
+{% block content %}
+<div class="row">
+  <h1>Settings</h1>
+</div>
+{% include "_settings_nav.html" %}
+{% if auth_source == 'local' %}
+<div class="row">
+  <p class="muted">Accounts that can log in to this console. Their role is the highest of their own role and their
+    groups' roles (see <a href="{{ url_for('admin.settings_roles') }}">Roles</a>).</p>
+  <span class="spacer"></span>
+  <a class="button" href="{{ url_for('admin.settings_user_form') }}">+ New user</a>
+</div>
+{% else %}
+<div class="row groups-toolbar">
+  <label class="grow">Search <input id="user-search" type="search" value="{{ q }}" placeholder="Username, name, e-mail or group"></label>
+  <label class="check"><input type="checkbox" id="with-role"> Only users with a role</label>
+  <form method="post" action="{{ url_for('admin.settings_users_sync') }}">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <button class="secondary icon-button" title="Sync with {{ sources[auth_source] }} now" aria-label="Sync with {{ sources[auth_source] }} now" onclick="this.classList.add('spinning')"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.4-6.4L21 8"/><path d="M21 3v5h-5"/></svg></button>
+  </form>
+</div>
+<p class="muted small"><span id="user-count">{{ users|length }}</span> of {{ users|length }} account(s){% if last_sync %} · last sync with {{ sources[auth_source] }} on
+  {{ last_sync.astimezone().strftime('%d/%m/%Y %H:%M') }} (automatically every 10 minutes when this page is opened){% endif %}.</p>
+{% endif %}
+<table class="users-table">
+  <thead><tr><th>Username</th><th>Name</th><th>Source</th><th>Own role</th><th>Groups</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+  <tbody>
+  {% if true %}
+    <tr class="muted-row">
+      <td><b>{{ admin_username }}</b></td><td>Built-in administrator</td><td><span class="pill">main.conf</span></td>
+      <td>Administrator</td><td></td><td><span class="pill role-administrator">Administrator</span></td>
+      <td><span class="pill ok">active</span></td><td></td>
+      <td class="actions muted" title="Always active: managed in the server's main.conf file">main.conf</td>
+    </tr>
+  {% endif %}
+  {% for u in users %}
+    {% set role = effective(u) %}
+    {% set gone = u.source != 'local' and last_sync and not in_directory(u) %}
+    <tr data-search="{{ (u.username ~ ' ' ~ (u.full_name or '') ~ ' ' ~ (u.email or '') ~ ' ' ~ (all_groups(u)|map(attribute='name')|join(' ')))|lower }}"
+        data-role="{{ role or '' }}" class="{{ 'gone' if gone }}">
+      <td><b>{{ u.username }}</b>{% if current_user and current_user.id == u.id %} <span class="muted">(you)</span>{% endif %}</td>
+      <td>{{ u.full_name or '' }}{% if u.email %}<br><span class="muted small-text">{{ u.email }}</span>{% endif %}</td>
+      <td><span class="pill src-{{ u.source }}">{{ sources[u.source] }}</span></td>
+      <td>{{ role_label(u.role) if u.role else '—' }}</td>
+      <td>{% for grp in all_groups(u) %}<span class="tag" title="{{ role_label(grp.role) }}">{{ grp.name }}</span>{% endfor %}</td>
+      <td>{% if role %}<span class="pill role-{{ role }}">{{ role_label(role) }}</span>{% else %}<span class="pill ko">none</span>{% endif %}</td>
+      <td>{% if u.locked_at %}<span class="pill ko" title="Locked {{ u.locked_at.astimezone().strftime('%d/%m/%Y %H:%M') }} after too many wrong passwords">locked</span>
+          {% elif gone %}<span class="pill ko" title="Not found the last time the directory was read">not in the directory</span>
+          {% elif u.directory_disabled %}<span class="pill" title="Disabled in {{ sources[u.source] }}">disabled in {{ sources[u.source] }}</span>
+          {% elif u.active %}<span class="pill ok">active</span>{% else %}<span class="pill">disabled</span>{% endif %}</td>
+      <td class="nowrap">{{ u.last_login_at.astimezone().strftime('%d/%m/%Y %H:%M') if u.last_login_at else 'never' }}</td>
+      <td class="actions">
+        {% if u.locked_at %}
+        <form method="post" action="{{ url_for('admin.settings_user_unlock', user_id=u.id) }}">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link">Unlock</button>
+        </form>
+        {% endif %}
+        <a href="{{ url_for('admin.settings_user_form', user_id=u.id) }}">Edit</a>
+        {% if not (current_user and current_user.id == u.id) and (u.source == 'local' or gone) %}
+        <form method="post" action="{{ url_for('admin.settings_user_delete', user_id=u.id) }}" onsubmit="return confirm('Delete the user {{ u.username|e }}?')">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Delete</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="9" class="muted">{% if auth_source == 'local' %}No user yet: create one with <i>+ New user</i>.
+      {% else %}No account read yet: check the {{ sources[auth_source] }} settings (Authentication), then sync (⟳).{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+{% block scripts %}
+{% if auth_source != 'local' %}
+<script>
+(function () {
+  const search = document.getElementById('user-search'), withRole = document.getElementById('with-role');
+  const rows = [...document.querySelectorAll('.users-table tbody tr[data-search]')];
+  function filter() {
+    const q = search.value.trim().toLowerCase(); let n = 0;
+    rows.forEach(r => { r.hidden = (q && !r.dataset.search.includes(q)) || (withRole.checked && !r.dataset.role); if (!r.hidden) n++; });
+    document.getElementById('user-count').textContent = n;
+  }
+  search.addEventListener('input', filter); withRole.addEventListener('change', filter); filter();
+})();
+</script>
+{% endif %}
+{% endblock %}

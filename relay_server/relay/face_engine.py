@@ -2,7 +2,7 @@
 128 numbers ("embedding"). Two photos of the same person give a high cosine similarity.
 
 The same file is used by the relay (identifies the person in a phone snapshot) and by the
-main server (enrols user photos and re-checks every check-in snapshot). The two ONNX models
+main server (enrols collaborator photos and re-checks every check-in snapshot). The two ONNX models
 (~39 MB) are downloaded once from the OpenCV model zoo and verified with SHA-256.
 """
 import hashlib
@@ -151,19 +151,19 @@ class FaceEngine:
 
 
 class Gallery:
-    """Embeddings of all enrolled users, for 1:N identification."""
+    """Embeddings of all enrolled collaborators, for 1:N identification."""
 
     def __init__(self):
         self.ids, self.matrix = [], np.zeros((0, 128), np.float32)
 
     def load(self, items):
-        """items: [(user_id, embedding list)]"""
+        """items: [(collaborator_id, embedding list)]"""
         items = [(uid, e) for uid, e in items if e is not None and len(e) == 128]
         self.ids = [uid for uid, _ in items]
         self.matrix = np.array([e for _, e in items], np.float32).reshape(-1, 128)
 
     def best(self, embedding):
-        """(user_id, similarity) of the closest user, or (None, 0.0) when empty."""
+        """(collaborator_id, similarity) of the closest collaborator, or (None, 0.0) when empty."""
         if not self.ids:
             return None, 0.0
         sims = self.matrix @ np.asarray(embedding, np.float32)

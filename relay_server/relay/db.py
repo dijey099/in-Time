@@ -1,9 +1,9 @@
-"""Local SQLite cache: users, check-ins (with sync state) and key/values, encrypted.
+"""Local SQLite cache: collaborators, check-ins (with sync state) and key/values, encrypted.
 
 Everything that matters is sealed with the relay's data key (AES-256-GCM, see crypto.py) and bound
 to its row: names, face data, photos, check-ins, settings. Only the relay can read or write it;
 a value changed, copied or moved outside the relay fails to decrypt and is ignored. Plain columns
-are only indexes (pseudonymous user tag, day, sequence number) and the sync state, and they are
+are only indexes (pseudonymous collaborator tag, day, sequence number) and the sync state, and they are
 checked against the sealed record whenever a row is read.
 
 Each check-in also carries a sequence number and the relay's signature (made when the check-in is
@@ -24,19 +24,19 @@ log = logging.getLogger("relay.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS kv2 (key TEXT PRIMARY KEY, sealed BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS users2 (tag TEXT PRIMARY KEY, sealed BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS collaborators2 (tag TEXT PRIMARY KEY, sealed BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS checkins2 (
     uuid        TEXT PRIMARY KEY,
     seq         INTEGER NOT NULL UNIQUE,
     day         TEXT NOT NULL,              -- local date (site time zone) of the check-in
-    user_tag    TEXT NOT NULL,              -- pseudonym of the user ID (Vault.tag)
+    collaborator_tag    TEXT NOT NULL,              -- pseudonym of the collaborator ID (Vault.tag)
     sealed      BLOB NOT NULL,              -- the check-in record, signed by the relay
     sync_state  TEXT NOT NULL DEFAULT 'pending',  -- pending / synced / rejected / tampered
     sync_error  TEXT,
     synced_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_checkins2_day ON checkins2(day, seq);
-CREATE INDEX IF NOT EXISTS idx_checkins2_user ON checkins2(user_tag, day, seq);
+CREATE INDEX IF NOT EXISTS idx_checkins2_collaborator ON checkins2(collaborator_tag, day, seq);
 CREATE INDEX IF NOT EXISTS idx_checkins2_sync ON checkins2(sync_state, seq);
 """
 
@@ -57,13 +57,15 @@ class Database:
         self.vault, self.identity, self.relay_id = vault, identity, relay_id
         self._local = threading.local()
         self._write_lock = threading.RLock()
-        self._kv_cache, self._users_cache, self._checkin_cache = {}, None, {}
+        self._kv_cache, self._collaborators_cache, self._checkin_cache = {}, None, {}
         self._warned = set()
         c = self.conn()
+        self._rename_v2_columns(c)  # before SCHEMA, whose indexes use the new column names
         c.executescript(SCHEMA)
         c.commit()
         self._check_key()
         self._migrate_v1()
+        self._migrate_v2()
 
     def conn(self) -> sqlite3.Connection:
         c = getattr(self._local, "conn", None)
@@ -90,7 +92,7 @@ class Database:
     def _check_key(self):
         row = self.conn().execute("SELECT sealed FROM kv2 WHERE key=?", (_CHECK,)).fetchone()
         if row is None:
-            if self.conn().execute("SELECT 1 FROM checkins2 UNION ALL SELECT 1 FROM users2 LIMIT 1").fetchone():
+            if self.conn().execute("SELECT 1 FROM checkins2 UNION ALL SELECT 1 FROM collaborators2 LIMIT 1").fetchone():
                 raise DataKeyMismatch("encrypted data without key check")
             self.write("INSERT INTO kv2(key, sealed) VALUES(?, ?)", (_CHECK, self.vault.seal(b"ok", "kv|" + _CHECK)))
             return
@@ -120,54 +122,54 @@ class Database:
                        (key, self.vault.seal_json(value, "kv|" + key)))
             self._kv_cache[key] = value
 
-    # --------------------------------------------------------------- users
-    def _all_users(self):
-        if self._users_cache is None:
+    # --------------------------------------------------------------- collaborators
+    def _all_collaborators(self):
+        if self._collaborators_cache is None:
             cache = {}
-            for row in self.conn().execute("SELECT tag, sealed FROM users2"):
+            for row in self.conn().execute("SELECT tag, sealed FROM collaborators2"):
                 try:
-                    u = self.vault.open_json(row["sealed"], "user|" + row["tag"])
+                    u = self.vault.open_json(row["sealed"], "collaborator|" + row["tag"])
                     if self.vault.tag(u["id"]) != row["tag"]:
                         raise Tampered(row["tag"])
                 except (Tampered, KeyError, ValueError):
-                    self._tampered(f"user record {row['tag'][:8]}")
+                    self._tampered(f"collaborator record {row['tag'][:8]}")
                     continue
                 cache[u["id"]] = u
-            self._users_cache = cache
-        return self._users_cache
+            self._collaborators_cache = cache
+        return self._collaborators_cache
 
-    def _save_user(self, u):
+    def _save_collaborator(self, u):
         tag = self.vault.tag(u["id"])
         with self._write_lock:
-            self.write("INSERT INTO users2(tag, sealed) VALUES(?, ?) ON CONFLICT(tag) DO UPDATE SET sealed=excluded.sealed",
-                       (tag, self.vault.seal_json(u, "user|" + tag)))
-            self._all_users()[u["id"]] = u
+            self.write("INSERT INTO collaborators2(tag, sealed) VALUES(?, ?) ON CONFLICT(tag) DO UPDATE SET sealed=excluded.sealed",
+                       (tag, self.vault.seal_json(u, "collaborator|" + tag)))
+            self._all_collaborators()[u["id"]] = u
 
-    def users(self, active_only=True):
-        return [dict(u) for _, u in sorted(self._all_users().items()) if u.get("active") or not active_only]
+    def collaborators(self, active_only=True):
+        return [dict(u) for _, u in sorted(self._all_collaborators().items()) if u.get("active") or not active_only]
 
-    def user(self, user_id):
-        u = self._all_users().get(str(user_id))
+    def collaborator(self, collaborator_id):
+        u = self._all_collaborators().get(str(collaborator_id))
         return dict(u) if u else None
 
-    def upsert_user(self, u: dict, photo_file, photo_ext=None):
+    def upsert_collaborator(self, u: dict, photo_file, photo_ext=None):
         with self._write_lock:
-            old = self._all_users().get(str(u["id"])) or {}
+            old = self._all_collaborators().get(str(u["id"])) or {}
             rec = {**old, "id": str(u["id"]), "full_name": u["full_name"], "descriptor": u.get("descriptor"),
                    "has_photo": bool(u.get("has_photo")), "photo_file": photo_file,
                    "photo_ext": photo_ext or old.get("photo_ext"), "active": bool(u.get("active", True)),
                    "updated_at": u.get("updated_at")}
             rec.setdefault("embedding", None)
             rec.setdefault("embedding_src", None)
-            self._save_user(rec)
+            self._save_collaborator(rec)
 
     @staticmethod
     def photo_version(u):
         return f"{u['photo_file']}|{u['updated_at']}" if u.get("photo_file") else None
 
-    def save_photo(self, user_id, data: bytes, ext: str) -> str:
-        """Store a user's photo encrypted; returns its file name."""
-        tag = self.vault.tag(user_id)
+    def save_photo(self, collaborator_id, data: bytes, ext: str) -> str:
+        """Store a collaborator's photo encrypted; returns its file name."""
+        tag = self.vault.tag(collaborator_id)
         name = f"{tag}.bin"
         tmp = self.photos_dir / (name + ".tmp")
         tmp.write_bytes(self.vault.seal(data, "photo|" + tag))
@@ -175,7 +177,7 @@ class Database:
         return name
 
     def photo_bytes(self, u) -> bytes | None:
-        """Decrypted photo of user `u`, or None."""
+        """Decrypted photo of collaborator `u`, or None."""
         if not u or not u.get("photo_file"):
             return None
         tag = self.vault.tag(u["id"])
@@ -194,22 +196,22 @@ class Database:
     def embedding(u):
         return u.get("embedding") or None
 
-    def users_needing_embedding(self):
-        """Active users whose embedding is missing or older than their photo (or photo removed)."""
-        return [u for u in self.users() if (u.get("embedding_src") or None) != self.photo_version(u)]
+    def collaborators_needing_embedding(self):
+        """Active collaborators whose embedding is missing or older than their photo (or photo removed)."""
+        return [u for u in self.collaborators() if (u.get("embedding_src") or None) != self.photo_version(u)]
 
-    def set_embedding(self, user_id, embedding, src):
+    def set_embedding(self, collaborator_id, embedding, src):
         with self._write_lock:
-            u = self._all_users().get(str(user_id))
+            u = self._all_collaborators().get(str(collaborator_id))
             if u:
-                self._save_user({**u, "embedding": embedding, "embedding_src": src})
+                self._save_collaborator({**u, "embedding": embedding, "embedding_src": src})
 
-    def deactivate_missing_users(self, ids):
+    def deactivate_missing_collaborators(self, ids):
         keep = {str(i) for i in ids}
         with self._write_lock:
-            for uid, u in list(self._all_users().items()):
+            for uid, u in list(self._all_collaborators().items()):
                 if uid not in keep and u.get("active"):
-                    self._save_user({**u, "active": False})
+                    self._save_collaborator({**u, "active": False})
 
     # --------------------------------------------------------- snapshots
     def _save_snapshot(self, uuid, data: bytes) -> str:
@@ -245,14 +247,14 @@ class Database:
         row = self.conn().execute("SELECT MAX(seq) m FROM checkins2").fetchone()
         return max(int(stored), int(row["m"] or 0)) + 1
 
-    def create_checkin(self, *, uuid, user_id, full_name, direction, ts, status, reason, distance, timezone,
+    def create_checkin(self, *, uuid, collaborator_id, full_name, direction, ts, status, reason, distance, timezone,
                        relay_name, snapshot: bytes | None, sync_state="pending", synced_at=None, location=None):
         """Number, sign, encrypt and store a new check-in (and its snapshot). Returns the record.
         `location`: {"lat", "lng", "accuracy"} from the phone's GPS (signed with the check-in)."""
         with self._write_lock:
             seq = self._next_seq()
             snapshot_file = self._save_snapshot(uuid, snapshot) if snapshot else None
-            record = {"uuid": uuid, "seq": seq, "relay_id": self.relay_id, "user_id": str(user_id),
+            record = {"uuid": uuid, "seq": seq, "relay_id": self.relay_id, "collaborator_id": str(collaborator_id),
                       "direction": direction, "ts": ts, "status": status, "reason": reason, "distance": distance,
                       "timezone": timezone,
                       "snapshot_sha256": hashlib.sha256(snapshot).hexdigest() if snapshot else None}
@@ -263,9 +265,9 @@ class Database:
             record["signature"] = self.identity.sign_checkin(record)
             record.update(full_name=full_name, relay_name=relay_name, snapshot_file=snapshot_file)
             self.set("checkin_seq", seq)
-            self.write("INSERT INTO checkins2(uuid, seq, day, user_tag, sealed, sync_state, synced_at) "
+            self.write("INSERT INTO checkins2(uuid, seq, day, collaborator_tag, sealed, sync_state, synced_at) "
                        "VALUES(?,?,?,?,?,?,?)",
-                       (uuid, seq, self._day(ts), self.vault.tag(user_id),
+                       (uuid, seq, self._day(ts), self.vault.tag(collaborator_id),
                         self.vault.seal_json(record, "checkin|" + uuid), sync_state, synced_at))
             self._checkin_cache[uuid] = record
             return record
@@ -280,7 +282,7 @@ class Database:
                 try:
                     rec = self.vault.open_json(row["sealed"], "checkin|" + uuid)
                     if (rec.get("uuid") != uuid or rec.get("seq") != row["seq"] or self._day(rec["ts"]) != row["day"]
-                            or self.vault.tag(rec["user_id"]) != row["user_tag"]):
+                            or self.vault.tag(rec["collaborator_id"]) != row["collaborator_tag"]):
                         raise Tampered(uuid)
                 except (Tampered, KeyError, ValueError):
                     self._tampered(f"check-in {uuid}")
@@ -298,10 +300,10 @@ class Database:
         return self._rows(self.conn().execute(
             "SELECT * FROM checkins2 WHERE day=? ORDER BY seq DESC", (day.isoformat(),)))
 
-    def last_checkin(self, user_id, day: date):
+    def last_checkin(self, collaborator_id, day: date):
         rows = self._rows(self.conn().execute(
-            "SELECT * FROM checkins2 WHERE user_tag=? AND day=? ORDER BY seq DESC LIMIT 1",
-            (self.vault.tag(user_id), day.isoformat())))
+            "SELECT * FROM checkins2 WHERE collaborator_tag=? AND day=? ORDER BY seq DESC LIMIT 1",
+            (self.vault.tag(collaborator_id), day.isoformat())))
         return rows[0] if rows else None
 
     def pending_checkins(self, limit=20):
@@ -347,7 +349,7 @@ class Database:
                         ext = old.suffix.lower() or ".jpg"
                         photo_file = self.save_photo(r["id"], old.read_bytes(), ext)
                         old.unlink()
-                    self._save_user({
+                    self._save_collaborator({
                         "id": r["id"], "full_name": r["full_name"],
                         "descriptor": json.loads(r["descriptor"]) if r.get("descriptor") else None,
                         "has_photo": bool(r["has_photo"]), "photo_file": photo_file, "photo_ext": ext,
@@ -367,7 +369,7 @@ class Database:
                             snap = p.read_bytes()
                             p.unlink()
                     state = "synced" if r["sync_state"] == "synced" else "pending"
-                    self.create_checkin(uuid=r["uuid"], user_id=r["user_id"], full_name=r["full_name"],
+                    self.create_checkin(uuid=r["uuid"], collaborator_id=r["user_id"], full_name=r["full_name"],
                                         direction=r["direction"], ts=r["ts"], status=r["status"],
                                         reason=r["reason"], distance=r["distance"], timezone=r.get("timezone"),
                                         relay_name=r.get("relay_name"), snapshot=snap, sync_state=state,
@@ -377,10 +379,72 @@ class Database:
             c.commit()
             c.execute("VACUUM")
             c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        # plain files left over (photos of removed users, old snapshots)
+        # plain files left over (photos of removed collaborators, old snapshots)
         for d in (self.photos_dir, self.snapshots_dir):
             for p in d.glob("*"):
                 if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png"):
                     p.unlink()
-        self._users_cache = None
+        self._collaborators_cache = None
         log.warning("Local data encrypted")
+
+    # ------------------------------------- upgrade: users -> collaborators
+    @staticmethod
+    def _rename_v2_columns(c):
+        """checkins2.user_tag -> collaborator_tag (relay versions before the rename)."""
+        cols = {r[1] for r in c.execute("PRAGMA table_info(checkins2)")}
+        if "user_tag" in cols:
+            c.execute("DROP INDEX IF EXISTS idx_checkins2_user")
+            c.execute("ALTER TABLE checkins2 RENAME COLUMN user_tag TO collaborator_tag")
+            c.commit()
+
+    def _migrate_v2(self):
+        """The people who check in were "users" before: re-seal the cached ones as collaborators and
+        rename "user_id" in the stored check-ins. Check-ins not accepted by the main server yet are
+        signed again: the main server only accepts the new format. Each record is opened (so it was
+        written by this relay) before it is re-sealed, exactly like when it is read."""
+        if (self.get("data_version", 1) or 1) >= 2:
+            return
+        c = self.conn()
+        tables = {r["name"] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        n_collab = n_checkins = 0
+        with self._write_lock:
+            if "users2" in tables:
+                for row in c.execute("SELECT tag, sealed FROM users2").fetchall():
+                    try:
+                        u = self.vault.open_json(row["sealed"], "user|" + row["tag"])
+                        if self.vault.tag(u["id"]) != row["tag"]:
+                            raise Tampered(row["tag"])
+                    except (Tampered, KeyError, ValueError):
+                        self._tampered(f"collaborator record {row['tag'][:8]}")
+                        continue
+                    self._save_collaborator(u)
+                    n_collab += 1
+                c.execute("DROP TABLE users2")
+                c.commit()
+            for row in c.execute("SELECT * FROM checkins2").fetchall():
+                uuid = row["uuid"]
+                try:
+                    rec = self.vault.open_json(row["sealed"], "checkin|" + uuid)
+                    if "user_id" not in rec:
+                        continue
+                    rec["collaborator_id"] = rec.pop("user_id")
+                    if (rec.get("uuid") != uuid or rec.get("seq") != row["seq"] or self._day(rec["ts"]) != row["day"]
+                            or self.vault.tag(rec["collaborator_id"]) != row["collaborator_tag"]):
+                        raise Tampered(uuid)
+                except (Tampered, KeyError, ValueError):
+                    self._tampered(f"check-in {uuid}")
+                    if row["sync_state"] == "pending":
+                        self.write("UPDATE checkins2 SET sync_state='tampered' WHERE uuid=?", (uuid,))
+                    continue
+                if row["sync_state"] in ("pending", "rejected"):
+                    rec["signature"] = self.identity.sign_checkin(rec)
+                self.write("UPDATE checkins2 SET sealed=? WHERE uuid=?",
+                           (self.vault.seal_json(rec, "checkin|" + uuid), uuid))
+                n_checkins += 1
+            self.write("DELETE FROM kv2 WHERE key='users_version'")
+            self._kv_cache.pop("users_version", None)
+            self._checkin_cache.clear()
+            self.set("data_version", 2)
+        if n_collab or n_checkins:
+            log.warning("Local data updated: %d user(s) renamed to collaborators, %d check-in(s) updated",
+                        n_collab, n_checkins)

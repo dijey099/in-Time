@@ -4,4 +4,4 @@
 set -e
 cd "$(dirname "$0")"
 pyinstaller --clean --noconfirm relay.spec
-echo "Copy dist/start_relay next to relay.ini, then run it."
+echo "Copy dist/start_relay next to relay.conf, then run it."

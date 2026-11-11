@@ -30,14 +30,12 @@ MIN_RANGES = {"IPv4": 5, "IPv6": 3}  # sanity check against truncated/garbage an
 
 
 def default_file() -> Path:
-    try:  # same location the server uses (CF_IPS_FILE in .env), if set
-        from dotenv import dotenv_values
-        value = dotenv_values(HERE / ".env").get("CF_IPS_FILE")
-    except ImportError:
-        value = None
-    value = os.environ.get("CF_IPS_FILE", value)
-    path = Path(value) if value else HERE / "cf_ips.txt"
-    return path if path.is_absolute() else HERE / path
+    try:  # same location the server uses (cloudflare_ips_file in main.conf [server])
+        sys.path.insert(0, str(HERE))
+        from config import Config
+        return Config.CF_IPS_FILE
+    except Exception:  # noqa: BLE001 - no usable main.conf: the default file
+        return HERE / "cf_ips.txt"
 
 
 def parse_ranges(text: str):

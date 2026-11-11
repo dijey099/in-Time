@@ -158,7 +158,7 @@ A token is locked to the first relay server that uses it (its machine ID and sig
   const limits = {min: {{ area_limits[0] }}, max: {{ area_limits[1] }}};
   // where to open the map when no area is set yet: another relay's area, if any
   const fallback = {{ area_fallback|tojson }};
-  window.AREA_MAP = {{ map_config|tojson }};  // tile server and address search (MAP_* in .env)
+  window.AREA_MAP = {{ map_config|tojson }};  // tile server and address search ([map] in main.conf)
 
   // "New relay" pop-up: the area is required
   const field = (form, name) => form.querySelector(`input[name="${name}"]`);

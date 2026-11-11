@@ -17,11 +17,11 @@
 </form>
 
 {% for c in companies %}
-{% set n_users = company_users.get(c.id, 0) %}
+{% set n_collaborators = company_collaborators.get(c.id, 0) %}
 <section class="card company-card" id="company-{{ c.id }}">
   <div class="company-head">
     <h2>{{ c.name }}</h2>
-    <a class="pill" href="{{ url_for('admin.users', company=c.id) }}" title="Show this company's users">{{ n_users }} user{{ '' if n_users == 1 else 's' }}</a>
+    <a class="pill" href="{{ url_for('admin.collaborators', company=c.id) }}" title="Show this company's collaborators">{{ n_collaborators }} collaborator{{ '' if n_collaborators == 1 else 's' }}</a>
     <span class="spacer"></span>
     <details class="rename">
       <summary class="button secondary small">Rename</summary>
@@ -34,18 +34,18 @@
     <form method="post" action="{{ url_for('admin.company_delete', company_id=c.id) }}"
           onsubmit="return confirm('Delete the company {{ c.name|e }} and its departments?')">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-      <button class="link danger" {{ 'disabled title="Move its users to another company first"'|safe if n_users }}>Delete</button>
+      <button class="link danger" {{ 'disabled title="Move its collaborators to another company first"'|safe if n_collaborators }}>Delete</button>
     </form>
   </div>
 
   <table class="dept-table">
-    <thead><tr><th>Department</th><th>Users</th><th></th></tr></thead>
+    <thead><tr><th>Department</th><th>Collaborators</th><th></th></tr></thead>
     <tbody>
     {% for d in c.departments %}
-      {% set n = dept_users.get(d.id, 0) %}
+      {% set n = dept_collaborators.get(d.id, 0) %}
       <tr>
         <td>{{ d.name }}</td>
-        <td>{% if n %}<a href="{{ url_for('admin.users', company=c.id, department=d.id) }}">{{ n }}</a>{% else %}<span class="muted">0</span>{% endif %}</td>
+        <td>{% if n %}<a href="{{ url_for('admin.collaborators', company=c.id, department=d.id) }}">{{ n }}</a>{% else %}<span class="muted">0</span>{% endif %}</td>
         <td class="actions">
           <details class="rename">
             <summary class="link">Rename</summary>
@@ -58,12 +58,12 @@
           <form method="post" action="{{ url_for('admin.department_delete', department_id=d.id) }}"
                 onsubmit="return confirm('Delete the department {{ d.name|e }}?')">
             <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-            <button class="link danger" {{ 'disabled title="Move its users to another department first"'|safe if n }}>Delete</button>
+            <button class="link danger" {{ 'disabled title="Move its collaborators to another department first"'|safe if n }}>Delete</button>
           </form>
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="3" class="muted">No department yet: users can't be added to this company until it has one.</td></tr>
+      <tr><td colspan="3" class="muted">No department yet: collaborators can't be added to this company until it has one.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -75,6 +75,6 @@
   </form>
 </section>
 {% else %}
-<p class="muted">No company yet. Create one above, with its departments: every user belongs to a company and one of its departments.</p>
+<p class="muted">No company yet. Create one above, with its departments: every collaborator belongs to a company and one of its departments.</p>
 {% endfor %}
 {% endblock %}

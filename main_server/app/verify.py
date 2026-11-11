@@ -1,15 +1,15 @@
 """Server-side face check (audit).
 
-- User photos: the server computes each user's reference face data (OpenCV SFace).
-- Check-ins: every snapshot sent by a relay is compared with the user's photo.
+- Collaborator photos: the server computes each collaborator's reference face data (OpenCV SFace).
+- Check-ins: every snapshot sent by a relay is compared with the collaborator's photo.
   Result in Checkin.verify_status:
     match        snapshot and photo show the same person
     mismatch     they don't: flagged
     no_face      no usable face in the snapshot: flagged
     no_snapshot  the relay sent no snapshot: flagged
-    replay       the snapshot was already used for another check-in, or is the user's reference photo
+    replay       the snapshot was already used for another check-in, or is the collaborator's reference photo
                  (or practically identical to it): flagged
-    no_reference the user has no usable photo: can't be checked (re-checked when it has one)
+    no_reference the collaborator has no usable photo: can't be checked (re-checked when it has one)
     legacy       recorded before the face check existed, without snapshot: not checked
     None         not checked yet (models not ready): done by the background worker
 
@@ -25,7 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.orm.attributes import flag_modified
 
 from .face_engine import MODEL_ID, FaceEngine, NoFace
-from .models import Checkin, User, db, utcnow
+from .models import Checkin, Collaborator, db, utcnow
 
 log = logging.getLogger("in_time.verify")
 
@@ -38,26 +38,26 @@ def engine() -> FaceEngine:
     return current_app.extensions["face_engine"]
 
 
-# ----------------------------------------------------------------- users
-def compute_user_face(user: User):
-    """Set user.face_embedding from the photo. Raises NoFace (embedding cleared) or RuntimeError."""
+# ----------------------------------------------------------------- collaborators
+def compute_collaborator_face(collaborator: Collaborator):
+    """Set collaborator.face_embedding from the photo. Raises NoFace (embedding cleared) or RuntimeError."""
     # keep updated_at: it tells relays to download the photo again
-    flag_modified(user, "updated_at")
-    user.face_embedding, user.face_model = None, None
-    if not user.photo_path:
+    flag_modified(collaborator, "updated_at")
+    collaborator.face_embedding, collaborator.face_model = None, None
+    if not collaborator.photo_path:
         return
-    path = current_app.config["PHOTOS_DIR"] / user.photo_path.split("/")[-1]
+    path = current_app.config["PHOTOS_DIR"] / collaborator.photo_path.split("/")[-1]
     try:
         emb = engine().embed(path)
     except NoFace:
-        user.face_model = MODEL_ID  # checked: no usable face
+        collaborator.face_model = MODEL_ID  # checked: no usable face
         raise
-    user.face_embedding, user.face_model = engine().to_list(emb), MODEL_ID
+    collaborator.face_embedding, collaborator.face_model = engine().to_list(emb), MODEL_ID
 
 
-def users_to_process():
-    return (User.query.filter(User.photo_path.isnot(None))
-            .filter((User.face_model.is_(None)) | (User.face_model != MODEL_ID)).all())
+def collaborators_to_process():
+    return (Collaborator.query.filter(Collaborator.photo_path.isnot(None))
+            .filter((Collaborator.face_model.is_(None)) | (Collaborator.face_model != MODEL_ID)).all())
 
 
 # -------------------------------------------------------------- check-ins
@@ -70,14 +70,14 @@ def _file_sha256(path):
 
 
 def _is_replay(c: Checkin) -> bool:
-    """The snapshot is a picture already used for another check-in, or the user's reference photo."""
+    """The snapshot is a picture already used for another check-in, or the collaborator's reference photo."""
     if not c.snapshot_sha256:
         return False
     if Checkin.query.filter(Checkin.snapshot_sha256 == c.snapshot_sha256, Checkin.id != c.id).first():
         return True
-    if c.user and c.user.photo_path:
+    if c.collaborator and c.collaborator.photo_path:
         try:
-            return _file_sha256(current_app.config["PHOTOS_DIR"] / c.user.photo_path.split("/")[-1]) == c.snapshot_sha256
+            return _file_sha256(current_app.config["PHOTOS_DIR"] / c.collaborator.photo_path.split("/")[-1]) == c.snapshot_sha256
         except OSError:
             return False
     return False
@@ -89,12 +89,12 @@ def verify_checkin(c: Checkin):
         status, score = "no_snapshot", None
     elif _is_replay(c):
         status, score = "replay", None
-    elif not (c.user and c.user.face_embedding and c.user.face_model == MODEL_ID):
+    elif not (c.collaborator and c.collaborator.face_embedding and c.collaborator.face_model == MODEL_ID):
         status, score = "no_reference", None
     else:
         path = current_app.config["SNAPSHOTS_DIR"] / c.snapshot_path.split("/")[-1]
         try:
-            score = engine().similarity(engine().embed(path), c.user.face_embedding)
+            score = engine().similarity(engine().embed(path), c.collaborator.face_embedding)
             if score >= current_app.config["FACE_REPLAY_SIMILARITY"]:
                 status = "replay"  # practically the reference photo itself, not a new picture
             else:
@@ -105,33 +105,33 @@ def verify_checkin(c: Checkin):
             status, score = "no_snapshot", None
     c.verify_status, c.verify_score, c.verified_at = status, (round(score, 4) if score is not None else None), utcnow()
     if c.flagged:
-        log.warning("Check-in %s of %s flagged by the face check: %s%s", c.uuid, c.user_id, status,
+        log.warning("Check-in %s of %s flagged by the face check: %s%s", c.uuid, c.collaborator_id, status,
                     f" (similarity {score:.2f})" if score is not None else "")
 
 
 def checkins_to_process(limit=BATCH):
-    """Not checked yet, or waiting for a user photo that is now available."""
-    with_ref = db.session.query(User.id).filter(User.face_embedding.isnot(None), User.face_model == MODEL_ID)
+    """Not checked yet, or waiting for a collaborator photo that is now available."""
+    with_ref = db.session.query(Collaborator.id).filter(Collaborator.face_embedding.isnot(None), Collaborator.face_model == MODEL_ID)
     return (Checkin.query.filter((Checkin.verify_status.is_(None))
-                                 | ((Checkin.verify_status == "no_reference") & Checkin.user_id.in_(with_ref)))
+                                 | ((Checkin.verify_status == "no_reference") & Checkin.collaborator_id.in_(with_ref)))
             .order_by(Checkin.id).limit(limit).all())
 
 
 def run_once():
-    """Process pending users and check-ins. Returns (users, checkins) processed."""
+    """Process pending collaborators and check-ins. Returns (collaborators, checkins) processed."""
     if not engine().ok:
         return 0, 0
-    n_users = 0
-    for u in users_to_process():
+    n_collaborators = 0
+    for u in collaborators_to_process():
         try:
-            compute_user_face(u)
+            compute_collaborator_face(u)
         except NoFace as exc:
-            log.warning("User %s: no usable face in the photo (%s)", u.id, exc)
+            log.warning("Collaborator %s: no usable face in the photo (%s)", u.id, exc)
         except OSError as exc:
-            log.warning("User %s: photo unreadable (%s)", u.id, exc)
+            log.warning("Collaborator %s: photo unreadable (%s)", u.id, exc)
             u.face_model = MODEL_ID
         db.session.commit()
-        n_users += 1
+        n_collaborators += 1
     n_checkins = 0
     while True:
         batch = checkins_to_process()
@@ -141,9 +141,9 @@ def run_once():
             verify_checkin(c)
         db.session.commit()
         n_checkins += len(batch)
-    if n_users or n_checkins:
-        log.info("Face check: %d user photo(s), %d check-in(s) processed", n_users, n_checkins)
-    return n_users, n_checkins
+    if n_collaborators or n_checkins:
+        log.info("Face check: %d collaborator photo(s), %d check-in(s) processed", n_collaborators, n_checkins)
+    return n_collaborators, n_checkins
 
 
 def _locked_run(app):

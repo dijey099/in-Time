@@ -240,56 +240,6 @@ def relay_required(view):
 
 
 # ---------------------------------------------------------------------- admin
-# Admin login lock. Failed logins are counted in a row (login_failures table, from any address).
-# At LOGIN_MAX_FAILURES (5) the login is locked: the file ADMIN_LOCK_FILE (admin_login.lock next to
-# .env by default) is created, and while it exists nobody can log in, not even with the right
-# password. It is never removed automatically: an administrator unlocks the console on the server by
-# deleting that file (or with: flask --app main unlock-admin). A successful login resets the count.
-def lock_file():
-    return current_app.config["ADMIN_LOCK_FILE"]
-
-
-def login_blocked(ip: str = "") -> bool:
-    if lock_file().exists():
-        return True
-    # the lock file could not be written: the counter itself keeps the login locked
-    return LoginFailure.query.count() >= current_app.config["LOGIN_MAX_FAILURES"]
-
-
-def record_login_failure(ip: str):
-    db.session.add(LoginFailure(ip=ip[:64] or "?"))
-    db.session.commit()
-    failures = LoginFailure.query.order_by(LoginFailure.at).all()
-    if len(failures) < current_app.config["LOGIN_MAX_FAILURES"]:
-        return
-    path = lock_file()
-    lines = [f"Admin login locked at {utcnow().isoformat(timespec='seconds')} after {len(failures)} failed logins "
-             f"in a row.", "Delete this file to unlock the admin console.", "", "Failed attempts (UTC, address):"]
-    lines += [f"  {f.at.astimezone(timezone.utc).isoformat(timespec='seconds')}  {f.ip}" for f in failures]
-    try:
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        LoginFailure.query.delete()  # the file now holds the lock (and the record of the attempts)
-        db.session.commit()
-    except OSError as exc:
-        current_app.logger.error("Could not write the admin lock file %s (%s): the login stays locked until "
-                                 "'flask --app main unlock-admin' is run", path, exc)
-    current_app.logger.error("Admin login LOCKED after %d failed logins in a row. Unlock: delete %s",
-                             len(failures), path)
-
-
-def clear_login_failures(ip: str = ""):
-    LoginFailure.query.delete()
-    db.session.commit()
-
-
-def unlock_admin():
-    """Remove the lock (file and counter). Returns True if the login was locked."""
-    was = login_blocked()
-    lock_file().unlink(missing_ok=True)
-    clear_login_failures()
-    return was
-
-
 def check_admin_credentials(username: str, password: str) -> bool:
     cfg = current_app.config
     return hmac.compare_digest(username, cfg["ADMIN_USERNAME"]) and hmac.compare_digest(

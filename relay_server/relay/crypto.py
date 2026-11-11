@@ -4,7 +4,7 @@
   key is sent to the main server, which records it with the relay's first request (bound to the
   relay token). The relay signs every request to the main server and every check-in with it, so a copied
   machine ID, a stolen relay token or an edited database is useless without this key.
-- Data key (AES-256-GCM): encrypts the local cache (users, check-ins, settings in relay.db) and the
+- Data key (AES-256-GCM): encrypts the local cache (collaborators, check-ins, settings in relay.db) and the
   photo / snapshot files. Each sealed value is bound to where it is stored (row, file name), so
   values can't be swapped between rows either. Anything changed outside the relay fails to decrypt
   and is ignored.
@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 # Fields of a signed check-in: must match main_server/app/api.py (CHECKIN_FIELDS)
-CHECKIN_FIELDS = ("uuid", "seq", "relay_id", "user_id", "direction", "ts", "status", "reason", "distance",
+CHECKIN_FIELDS = ("uuid", "seq", "relay_id", "collaborator_id", "direction", "ts", "status", "reason", "distance",
                   "timezone", "snapshot_sha256")
 
 
@@ -67,7 +67,7 @@ class Vault:
         return json.loads(self.open(blob, where))
 
     def tag(self, text: str) -> str:
-        """Stable pseudonym of a value (user ID) for indexes and file names."""
+        """Stable pseudonym of a value (collaborator ID) for indexes and file names."""
         return hmac.new(self._index_key, str(text).encode(), hashlib.sha256).hexdigest()[:32]
 
 
@@ -100,7 +100,7 @@ def checkin_message(record: dict) -> bytes:
     fields = {k: record.get(k) for k in CHECKIN_FIELDS}
     if record.get("location") is not None:
         fields["location"] = record["location"]
-    return b"in-Time checkin v1\n" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
+    return b"in-Time checkin v2\n" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
 
 
 def load_keys(store):

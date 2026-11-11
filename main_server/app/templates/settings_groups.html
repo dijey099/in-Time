@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Groups · Settings{% endblock %}
+{% macro group_fields(g, prefix='') %}
+  <div class="row tight group-fields">
+    <label>Name <input name="name" required maxlength="100" value="{{ g.name if g else form.get('name', '') }}" placeholder="e.g. HR team"></label>
+    <label>Role
+      <select name="role" required>
+        {% if not g %}<option value="">Choose…</option>{% endif %}
+        {% for key, label in roles_choices %}<option value="{{ key }}" {{ 'selected' if (g.role if g else form.get('role')) == key }}>{{ label }}</option>{% endfor %}
+      </select></label>
+    <label>Description <input name="description" maxlength="300" value="{{ (g.description or '') if g else form.get('description', '') }}"></label>
+  </div>
+{% endmacro %}
+{% block content %}
+<h1>Settings</h1>
+{% include "_settings_nav.html" %}
+<p class="muted">A group gives a role to its members. Add members on the <a href="{{ url_for('admin.settings_users') }}">Users</a>
+  page. (With LDAP or Active Directory as the authentication source, this page lists the directory's groups instead.)</p>
+
+<form method="post" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <h2>New group</h2>
+  {{ group_fields(None) }}
+  <button>Create group</button>
+</form>
+
+{% for grp in groups %}
+<section class="card" id="group-{{ grp.id }}">
+  <div class="company-head">
+    <h2>{{ grp.name }}</h2>
+    <span class="pill role-{{ grp.role }}">{{ role_label(grp.role) }}</span>
+    <span class="spacer"></span>
+    <form method="post" action="{{ url_for('admin.settings_group_delete', group_id=grp.id) }}"
+          onsubmit="return confirm('Delete the group {{ grp.name|e }}? Its members lose its role.')">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Delete</button>
+    </form>
+  </div>
+  {% if grp.description %}<p class="muted">{{ grp.description }}</p>{% endif %}
+  <p><b>Members:</b>
+    {% for u in grp.users %}<span class="tag">{{ u.username }}</span>{% endfor %}
+    {% if not grp.users %}<span class="muted">none yet</span>{% endif %}
+  </p>
+  <details class="rename">
+    <summary class="button secondary small">Edit</summary>
+    <form method="post" action="{{ url_for('admin.settings_group_edit', group_id=grp.id) }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      {{ group_fields(grp) }}
+      <button class="small">Save</button>
+    </form>
+  </details>
+</section>
+{% else %}
+<p class="muted">No group yet.</p>
+{% endfor %}
+{% endblock %}

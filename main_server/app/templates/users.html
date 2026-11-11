@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Users{% endblock %}
+{% block title %}Collaborators{% endblock %}
 {% block content %}
 <div class="row">
-  <h1>Users</h1>
+  <h1>Collaborators</h1>
   <form method="get" class="inline">
     <input name="q" value="{{ q }}" placeholder="Search ID or name">
     <select name="company" aria-label="Company" id="filter-company">
@@ -20,13 +20,13 @@
     </select>
     <button>Search</button>
   </form>
-  <a class="button" href="{{ url_for('admin.user_form') }}">+ New user</a>
+  <a class="button" href="{{ url_for('admin.user_form') }}">+ New collaborator</a>
 </div>
 
 {% if not companies %}
-<div class="flash warn">No company yet: <a href="{{ url_for('admin.companies') }}">create a company and its departments</a> before adding users.</div>
+<div class="flash warn">No company yet: <a href="{{ url_for('admin.companies') }}">create a company and its departments</a> before adding collaborators.</div>
 {% elif invalid_count %}
-<div class="flash warn">{{ invalid_count }} user(s) have no company or department.
+<div class="flash warn">{{ invalid_count }} collaborator(s) have no company or department.
   <a href="{{ url_for('admin.users', company='__none__') }}">Show them</a> and edit them to choose one.</div>
 {% endif %}
 
@@ -35,7 +35,7 @@
 {% if pending or noface %}
 <div class="flash warn">
   {% if pending %}{{ pending|length }} photo(s) not checked by the server yet (done automatically within a minute).{% endif %}
-  {% if noface %}{{ noface|length }} user(s) have no usable face in their photo and can't check in: {{ noface|map(attribute='id')|join(', ') }}.{% endif %}
+  {% if noface %}{{ noface|length }} collaborator(s) have no usable face in their photo and can't check in: {{ noface|map(attribute='id')|join(', ') }}.{% endif %}
   {% if pending %}
   <form method="post" action="{{ url_for('admin.users_check_faces') }}" class="inline-block">
     <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="secondary small">Check photos now</button>
@@ -64,7 +64,7 @@
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="8" class="muted">No users</td></tr>
+    <tr><td colspan="8" class="muted">No collaborators</td></tr>
   {% endfor %}
   </tbody>
 </table>

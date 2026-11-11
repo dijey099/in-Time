@@ -1,4 +1,4 @@
-"""Secrets of the relay (main server token, identity and data keys) kept out of relay.ini.
+"""Secrets of the relay (main server token, identity and data keys) kept out of relay.conf.
 
 On Windows they are encrypted with DPAPI for the Windows account that runs the relay: copying the
 data folder to another PC or reading it from another account gives nothing usable. Elsewhere they
@@ -11,7 +11,7 @@ can't be read or changed with a simple script, even from the relay's own account
 The store holds the relay's identity key and the data key that encrypts its cache (see crypto.py):
 if secrets.bin is deleted, check-ins not yet sent to the main server can't be read any more.
 
-A value typed in relay.ini is taken as the new value: it is moved here and removed from relay.ini.
+A value typed in relay.conf is taken as the new value: it is moved here and removed from relay.conf.
 Data folder permissions are also restricted to the relay's account (photos and snapshots are
 biometric data).
 """
@@ -114,7 +114,7 @@ class SecretStore:
             raise SystemExit(f"Can't read the relay's stored secrets ({self.path}): {type(exc).__name__} {exc}. "
                              f"They can only be read on this computer by the account that saved them. Run the "
                              f"relay with that account. Otherwise delete {self.path.name}, generate a new token for "
-                             f"this relay on the main server (Relays page) and type it in relay.ini: check-ins not "
+                             f"this relay on the main server (Relays page) and type it in relay.conf: check-ins not "
                              f"yet sent to the main server will be lost.")
         self._values = values
         self._save()  # upgrade to the current format
@@ -142,11 +142,11 @@ class SecretStore:
             self._save()
 
 
-def take_from_ini(ini_path: Path, store: SecretStore, entries):
-    """entries: [(section, option, secret name)]. A value typed in relay.ini replaces the stored
-    one, then is blanked in relay.ini (comments and layout are kept)."""
+def take_from_conf(conf_path: Path, store: SecretStore, entries):
+    """entries: [(section, option, secret name)]. A value typed in relay.conf replaces the stored
+    one, then is blanked in relay.conf (comments and layout are kept)."""
     try:
-        lines = ini_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        lines = conf_path.read_text(encoding="utf-8").splitlines(keepends=True)
     except OSError:
         return
     section, changed = None, False
@@ -162,12 +162,12 @@ def take_from_ini(ini_path: Path, store: SecretStore, entries):
                 end = "\r\n" if line.endswith("\r\n") else "\n"
                 lines[i] = m.group(1).rstrip() + " " + end
                 changed = True
-                log.info("[%s] %s moved from relay.ini to the protected store", sec, opt)
+                log.info("[%s] %s moved from relay.conf to the protected store", sec, opt)
     if changed:
         try:
-            ini_path.write_text("".join(lines), encoding="utf-8")
+            conf_path.write_text("".join(lines), encoding="utf-8")
         except OSError as exc:
-            log.warning("Could not remove the secrets from %s: %s", ini_path, exc)
+            log.warning("Could not remove the secrets from %s: %s", conf_path, exc)
 
 
 def restrict_dir(path: Path):

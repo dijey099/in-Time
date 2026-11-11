@@ -5,8 +5,8 @@
 #
 # Installs into /var/lib/in-time/main-server, runs as the system user "in-time" (home /var/lib/in-time)
 # with the service in-time-main. Running it again detects the existing installation first and
-# updates it: the code is replaced, the Python environment (.venv) is updated, and .env (backed up
-# first), photos, snapshots, face models and the database are kept. If the update fails, the
+# updates it: the code is replaced, the Python environment (.venv) is updated, and main.conf (backed
+# up first), photos, snapshots, face models and the database are kept. If the update fails, the
 # previous version is put back.
 #
 # Options (environment variables):
@@ -27,8 +27,8 @@ SVC_USER=in-time
 SERVICE=in-time-main
 UNIT="/etc/systemd/system/$SERVICE.service"
 CRON_FILE=/etc/cron.d/in-time-cf-ips
-# Kept when updating an existing installation (admin_login.lock: a locked admin login stays locked)
-KEEP=".env .venv photos snapshots models app/static/vendor cf_ips.txt admin_login.lock"
+# Kept when updating an existing installation
+KEEP="main.conf .venv photos snapshots models app/static/vendor cf_ips.txt"
 # Not needed to run the server
 REMOVE="install_main_server.sh $SERVICE.service postgres __pycache__ venv .venv-build *.zip"
 
@@ -54,7 +54,7 @@ ptest() { $SUDO test "$@"; }
 
 # ------------------------------------------------------- existing installation
 EXISTING=no
-if ptest -f "$APP/main.py" || ptest -f "$APP/.env" || [ -f "$UNIT" ]; then
+if ptest -f "$APP/main.py" || ptest -f "$APP/main.conf" || [ -f "$UNIT" ]; then
     EXISTING=yes
 fi
 if [ -f "$UNIT" ]; then
@@ -64,14 +64,20 @@ if [ -f "$UNIT" ]; then
     fi
 fi
 if [ "$EXISTING" = yes ]; then
-    ptest -f "$APP/.env" || die "an installation exists in $APP but has no .env: restore it (or remove $APP) first"
+    if ! ptest -f "$APP/main.conf"; then
+        warn "an installation exists in $APP but has no main.conf (.env is no longer read)"
+        echo "    Create it from the example, set its values (those of your .env), then run this script again:"
+        echo "      sudo curl -sSL -o $APP/main.conf https://raw.githubusercontent.com/$REPO/refs/heads/$BRANCH/main_server/main.conf.example"
+        echo "      sudo nano $APP/main.conf"
+        die "main.conf missing in $APP"
+    fi
     say "Existing in-Time main server found in $APP: it will be updated"
-    echo "    kept: .env (a backup is made first), photos, snapshots, face models, database"
+    echo "    kept: main.conf (a backup is made first), photos, snapshots, face models, database"
     echo "    updated: code and Python environment (.venv)"
 else
     # another server already on port 8000 (e.g. a manual installation started by hand)
     if command -v ss >/dev/null 2>&1 && ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq '(^|[:.])8000$'; then
-        warn "port 8000 is already in use on this machine: if it is another in-Time main server (manual installation), stop it, or set SERVER in .env to another port"
+        warn "port 8000 is already in use on this machine: if it is another in-Time main server (manual installation), stop it, or set bind in main.conf ([server]) to another port"
     fi
 fi
 
@@ -237,7 +243,7 @@ done
 find "$NEW" -name '__pycache__' -type d -prune -exec rm -rf {} +
 find "$NEW" -name '*.pyc' -delete
 # Runtime data never comes from the source: keep it out of a fresh install too
-rm -rf "$NEW/.env" "$NEW/photos" "$NEW/snapshots" "$NEW/models" "$NEW/app/static/vendor"
+rm -rf "$NEW/main.conf" "$NEW/photos" "$NEW/snapshots" "$NEW/models" "$NEW/app/static/vendor"
 
 # -------------------------------------------------------------------- user
 if ! id "$SVC_USER" >/dev/null 2>&1; then
@@ -290,16 +296,16 @@ rollback() {
         $SUDO rm -rf "$STAGE"
     fi
     if [ "$WAS_ACTIVE" = yes ]; then $SUDO systemctl start "$SERVICE"; fi
-    warn "the previous version is back in $APP (copy of .env: $ENV_BACKUP)"
+    warn "the previous version is back in $APP (copy of main.conf: $ENV_BACKUP)"
 }
 # shellcheck disable=SC2154  # status is set inside the trap
 trap 'status=$?; rollback; rm -rf "$TMP"; exit $status' EXIT
 
 if [ "$EXISTING" = yes ]; then
-    ENV_BACKUP="$BASE/env-backup-$STAMP"
-    $SUDO cp -p "$APP/.env" "$ENV_BACKUP"
+    ENV_BACKUP="$BASE/conf-backup-$STAMP"
+    $SUDO cp -p "$APP/main.conf" "$ENV_BACKUP"
     $SUDO chmod 600 "$ENV_BACKUP"
-    say "Saved a copy of .env: $ENV_BACKUP"
+    say "Saved a copy of main.conf: $ENV_BACKUP"
 
     $SUDO rm -rf "$APP.old" "$STAGE" "$BASE/venv.rollback"
     $SUDO mv "$NEW" "$STAGE"   # the new code only (data never goes through $TMP)
@@ -327,21 +333,21 @@ if [ "$EXISTING" = yes ]; then
     $SUDO mv "$STAGE" "$APP"
 else
     if ptest -e "$APP"; then  # an empty folder left over: anything else would be overwritten
-        $SUDO rmdir "$APP" 2>/dev/null || die "$APP exists but is not an in-Time installation (no main.py, no .env): move it away first"
+        $SUDO rmdir "$APP" 2>/dev/null || die "$APP exists but is not an in-Time installation (no main.py, no main.conf): move it away first"
     fi
     say "Installing into $APP"
     $SUDO mv "$NEW" "$APP"
 fi
 
 FIRST_ENV=no
-if ! ptest -f "$APP/.env"; then
+if ! ptest -f "$APP/main.conf"; then
     FIRST_ENV=yes
-    $SUDO cp "$APP/.env.example" "$APP/.env"
+    $SUDO cp "$APP/main.conf.example" "$APP/main.conf"
     # a random session key and admin password instead of the placeholders (the server refuses them)
     KEY="$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(48))')"
-    $SUDO sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$KEY|" "$APP/.env"
+    $SUDO sed -i "s|^secret_key *=.*|secret_key = $KEY|" "$APP/main.conf"
     ADMIN_PW="$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(15))')"
-    $SUDO sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$ADMIN_PW|" "$APP/.env"
+    $SUDO sed -i "s|^password *=.*|password = $ADMIN_PW|" "$APP/main.conf"
 fi
 # PostgreSQL installed by this script: role and database "in-time", reached through the local
 # socket with peer authentication (system user in-time = database role in-time, no password).
@@ -368,13 +374,13 @@ if [ "$PG_INSTALL" = yes ]; then
             || die "could not create the database"
     fi
     if [ "$FIRST_ENV" = yes ]; then
-        $SUDO sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$DB_URL|" "$APP/.env"
+        $SUDO sed -i "s|^url *=.*|url = $DB_URL|" "$APP/main.conf"
     fi
 fi
 
 $SUDO chown -R "$SVC_USER:$SVC_USER" "$BASE"
 $SUDO chmod 750 "$BASE" "$APP"
-$SUDO chmod 600 "$APP/.env"
+$SUDO chmod 600 "$APP/main.conf"
 
 # ---------------------------------------------------------- python packages
 # The environment is rebuilt when it is missing, broken or made with another Python version
@@ -395,6 +401,7 @@ run_as_user env HOME="$BASE" "$APP/.venv/bin/pip" install -q --upgrade pip
 run_as_user env HOME="$BASE" "$APP/.venv/bin/pip" install -q --upgrade -r "$APP/requirements.txt"
 run_as_user "$APP/.venv/bin/python" -c 'import flask, flask_sqlalchemy, psycopg, cryptography, cv2, numpy' \
     || die "the Python environment is incomplete after the update"
+
 
 # the new version is in place: the previous one is no longer needed
 ROLLBACK=no
@@ -447,32 +454,33 @@ in-Time main server installed in $APP
 
 EOF
 if [ "$PG_INSTALL" = yes ] && [ "$FIRST_ENV" = yes ]; then
-    DB_NOTE="     DATABASE_URL already points to the local \"in-time\" database created by this script."
+    DB_NOTE="     [database] url already points to the local \"in-time\" database created by this script."
 elif [ "$PG_INSTALL" = yes ]; then
-    DB_NOTE="     For the local database created by this script: DATABASE_URL=$DB_URL"
+    DB_NOTE="     For the local database created by this script, in [database]: url = $DB_URL"
 else
-    DB_NOTE="     Set DATABASE_URL to your PostgreSQL database."
+    DB_NOTE="     Set url in [database] to your PostgreSQL database."
 fi
 if [ "$FIRST_ENV" = yes ]; then
+    ADMIN_USER="$($SUDO sed -n 's/^username *= *//p' "$APP/main.conf" | head -n 1)"
     cat <<EOF
-Admin console login (generated, also in $APP/.env):
-  user:     admin
+Admin console login (generated, also in $APP/main.conf):
+  user:     ${ADMIN_USER:-itadmin}
   password: $ADMIN_PW
-Keep it somewhere safe; change ADMIN_PASSWORD in .env if you prefer your own (12+ characters).
+Keep it somewhere safe; change password in [admin] of main.conf if you prefer your own (12+ characters).
 
 Next steps:
   1. Edit the configuration (proxy settings...):
-       sudo nano $APP/.env
+       sudo nano $APP/main.conf
 $DB_NOTE
   2. Start the server:
        sudo systemctl start $SERVICE
 EOF
 elif [ "$WAS_ACTIVE" = yes ]; then
-    echo "Updated and restarted. Your .env was kept (copy: $ENV_BACKUP); compare it with .env.example for new settings."
+    echo "Updated and restarted. Your main.conf was kept (copy: $ENV_BACKUP); compare it with main.conf.example for new settings."
 else
     cat <<EOF
-Updated. Your .env was kept (copy: $ENV_BACKUP); compare it with .env.example for new settings.
-Check the configuration if needed (sudo nano $APP/.env), then start the server:
+Updated. Your main.conf was kept (copy: $ENV_BACKUP); compare it with main.conf.example for new settings.
+Check the configuration if needed (sudo nano $APP/main.conf), then start the server:
 $DB_NOTE
   sudo systemctl start $SERVICE
 EOF
@@ -482,5 +490,5 @@ cat <<EOF
 Status and logs:
   sudo systemctl status $SERVICE
   sudo journalctl -u $SERVICE -f
-It listens on 127.0.0.1:8000 by default (put nginx in front, or set SERVER in .env).
+It listens on 127.0.0.1:8000 by default (put nginx in front, or set bind in [server] of main.conf).
 EOF

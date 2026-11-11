@@ -23,7 +23,7 @@ class Identifier:
     def __init__(self, engine: FaceEngine, db, min_similarity: float):
         self.engine, self.db, self.min_similarity = engine, db, min_similarity
         self.gallery = Gallery()
-        self.missing_faces = []        # user ids whose photo has no usable face
+        self.missing_faces = []        # collaborator ids whose photo has no usable face
         self._refresh_lock = threading.Lock()
         self._tokens = {}
         self._tokens_lock = threading.Lock()
@@ -42,7 +42,7 @@ class Identifier:
         if not self.engine.ok:
             return
         with self._refresh_lock:
-            for u in self.db.users_needing_embedding():
+            for u in self.db.collaborators_needing_embedding():
                 src = self.db.photo_version(u)
                 emb = None
                 data = self.db.photo_bytes(u) if src else None
@@ -50,13 +50,13 @@ class Identifier:
                     try:
                         emb = self.engine.to_list(self.engine.embed(data))
                     except (NoFace, OSError) as exc:
-                        log.warning("User %s: no usable face in the photo (%s)", u["id"], exc)
+                        log.warning("Collaborator %s: no usable face in the photo (%s)", u["id"], exc)
                 self.db.set_embedding(u["id"], emb, src)
-            users = self.db.users()
+            collaborators = self.db.collaborators()
             gallery = Gallery()
-            gallery.load([(u["id"], self.db.embedding(u)) for u in users])
+            gallery.load([(u["id"], self.db.embedding(u)) for u in collaborators])
             self.gallery = gallery
-            self.missing_faces = [u["id"] for u in users if not u.get("embedding")]
+            self.missing_faces = [u["id"] for u in collaborators if not u.get("embedding")]
 
     # ----------------------------------------------------------- identify
     def allow(self, ip) -> bool:
@@ -82,18 +82,18 @@ class Identifier:
             pass
 
     def identify(self, jpeg: bytes):
-        """(user dict, similarity) or (None, best similarity). Raises NoFace."""
+        """(collaborator dict, similarity) or (None, best similarity). Raises NoFace."""
         emb = self.engine.embed(jpeg)
-        user_id, sim = self.gallery.best(emb)
-        if user_id is None or sim < self.min_similarity:
+        collaborator_id, sim = self.gallery.best(emb)
+        if collaborator_id is None or sim < self.min_similarity:
             return None, sim
-        user = self.db.user(user_id)
-        if not user or not user["active"]:
+        collaborator = self.db.collaborator(collaborator_id)
+        if not collaborator or not collaborator["active"]:
             return None, sim
-        return user, sim
+        return collaborator, sim
 
     # -------------------------------------------------------------- tokens
-    def issue(self, user, similarity, jpeg, ip) -> str:
+    def issue(self, collaborator, similarity, jpeg, ip) -> str:
         token = secrets.token_urlsafe(24)
         now = time.monotonic()
         with self._tokens_lock:
@@ -105,7 +105,7 @@ class Identifier:
                 del self._tokens[t]
             if len(self._tokens) >= MAX_TOKENS:
                 self._tokens.pop(next(iter(self._tokens)))
-            self._tokens[token] = {"user_id": user["id"], "similarity": similarity, "snapshot": jpeg,
+            self._tokens[token] = {"collaborator_id": collaborator["id"], "similarity": similarity, "snapshot": jpeg,
                                    "ip": ip, "expires": now + TOKEN_TTL}
         return token
 
@@ -138,6 +138,6 @@ class Identifier:
     def warning(self):
         n = len(self.missing_faces)
         if self.engine.ok and n:
-            return (f"{n} user(s) can't be recognised: no photo, or no usable face in it "
+            return (f"{n} collaborator(s) can't be recognised: no photo, or no usable face in it "
                     f"({', '.join(self.missing_faces[:5])}{'…' if n > 5 else ''})")
         return ""

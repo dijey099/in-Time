@@ -10,13 +10,10 @@ User=in-time
 Group=in-time
 WorkingDirectory=/var/lib/in-time/main-server
 
-Environment=SERVER=127.0.0.1:8000
-Environment=WORKERS=2
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-/var/lib/in-time/main-server/.env
 
-ExecStart=/var/lib/in-time/main-server/.venv/bin/gunicorn --workers ${WORKERS} --threads 4 \
-    --timeout 120 --bind ${SERVER} --access-logfile - main:app
+# Settings: main.conf in the working directory (address and processes: [server] bind / workers)
+ExecStart=/var/lib/in-time/main-server/.venv/bin/gunicorn -c gunicorn.conf.py main:app
 
 Restart=on-failure
 RestartSec=5

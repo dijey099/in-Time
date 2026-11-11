@@ -1,0 +1,74 @@
+# in-Time main server configuration. Copy to main.conf (next to main.py) and set the values below:
+# the server refuses to start with the placeholders. Keep this file private (it holds passwords):
+# chmod 600 main.conf. After a change, restart the service (sudo systemctl restart in-time-main).
+# Lines starting with # or ; are comments. A missing line = the default value.
+
+[security]
+# Session key of the admin console: a long random value (32+ characters), e.g.
+#   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+secret_key = replace-with-a-long-random-string
+# true when the admin console is served over HTTPS (recommended)
+session_cookie_secure = false
+
+[database]
+# PostgreSQL connection
+url = postgresql+psycopg://in-time:in-time@localhost:5432/in-time
+
+[admin]
+# Built-in administrator of the console: always an Administrator, always able to log in (it can't be
+# turned off, disabled or locked). Other accounts, groups and roles: Settings > Users / Groups;
+# LDAP and Active Directory: Settings > Authentication.
+username = itadmin
+# At least 12 characters
+password = replace-with-a-strong-password
+# Per-account lock: this many wrong passwords for the same account within lock_minutes lock it until
+# an Administrator unlocks it (Settings > Users, or: flask --app main unlock-user <name>).
+# The built-in administrator is never locked: it is paused for lock_minutes instead.
+max_failures = 5
+lock_minutes = 15
+
+[server]
+# Address and number of processes of Gunicorn (systemd service). Keep 127.0.0.1 behind nginx; use the
+# LAN IP only for local relays, never 0.0.0.0 on a server reachable from the internet.
+bind = 127.0.0.1:8000
+workers = 2
+# Number of reverse proxies in front of the app (1 with nginx), needed for the relay IP check
+trusted_proxies = 0
+# Addresses of those proxies (comma separated IPs/CIDR). Forwarded headers from anyone else are ignored.
+trusted_peers = 127.0.0.1/32, ::1/128
+# true when the main server is behind Cloudflare's proxy
+# (trusted_proxies must be 1 if your setup looks like: Cloudflare -> nginx -> main server)
+cloudflare = false
+# Cloudflare IP ranges, kept current by update_cf_ips.py
+cloudflare_ips_file = cf_ips.txt
+
+[storage]
+# Folders (relative to this file, or absolute)
+photos_dir = photos
+snapshots_dir = snapshots
+face_models_dir = models
+
+[face]
+# Face check of check-in snapshots: similarity (0-1) with the photo required for a match (higher = stricter)
+min_similarity = 0.363
+# A snapshot at least this similar to the photo is flagged "replay"
+replay_similarity = 0.97
+
+[checkins]
+# A check-in time this many seconds ahead of the server clock is refused
+max_future_seconds = 300
+# Flagged "delayed" when received this many seconds after it was made while the relay was connected
+max_delay_seconds = 600
+
+[map]
+# Map used to pick a relay's site area (Relays page). Defaults to OpenStreetMap's free, volunteer-run
+# servers (fine for a few admins; see https://operations.osmfoundation.org/policies/tiles/).
+# Use another tile provider for heavier use, with its attribution. An empty search_url hides address search.
+tile_url = https://tile.openstreetmap.org/{z}/{x}/{y}.png
+tile_attribution = &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors
+search_url = https://nominatim.openstreetmap.org/search
+
+[about]
+# Source code link shown in the admin console footer. in-Time is AGPL-3.0: if you run a modified
+# version, publish your changes and put their address here.
+source_url = https://github.com/dijey099/in-Time

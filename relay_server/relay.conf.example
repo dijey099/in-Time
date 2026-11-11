@@ -1,4 +1,4 @@
-; Copy to relay.ini (same folder as start_relay.py or start_relay.exe) and edit.
+; Copy to relay.conf (same folder as start_relay.py or start_relay.exe) and edit.
 
 [main_server]
 ; Public URL of the Main server (HTTPS strongly recommended)
@@ -25,14 +25,14 @@ data_dir = data
 
 [face]
 ; The relay identifies the person in the phone snapshot itself: the phone only takes
-; the picture. Similarity required between the snapshot and the user's photo
+; the picture. Similarity required between the snapshot and the collaborator's photo
 ; (0 to 1, higher = stricter). 0.363 is OpenCV's reference value and the minimum; 0.40-0.45 is
 ; stricter. The main server's FACE_MIN_SIMILARITY applies when it is higher.
 min_similarity = 0.363
 
 [time]
 ; Time zone of the site (IANA name). Set it: otherwise the PC time zone is used,
-; which a user could change. Examples: Indian/Antananarivo, Europe/Paris, Africa/Nairobi
+; which a collaborator could change. Examples: Indian/Antananarivo, Europe/Paris, Africa/Nairobi
 timezone = Indian/Antananarivo
 ; Seconds between two internet/time checks, 30 to 300 (retried every 10 s after a failure)
 check_interval = 60

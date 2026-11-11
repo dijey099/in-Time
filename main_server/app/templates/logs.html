@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Logs{% endblock %}
+{% block content %}
+<h1>Logs</h1>
+<p class="muted small">Every action made in this console: who made it, when, from which address, and what changed.
+  Logs can't be edited or deleted from the console.</p>
+<form method="get" class="filters">
+  {% include "_date_fields.html" %}
+  <label>User
+    <select name="actor"><option value="">all</option>
+      {% for a in actors %}<option {{ 'selected' if args.actor == a }}>{{ a }}</option>{% endfor %}
+    </select></label>
+  <label>Action
+    <select name="action"><option value="">all</option>
+      {% for cat, items in categories.items() %}
+      <optgroup label="{{ cat }}">
+        <option value="cat:{{ cat }}" {{ 'selected' if args.action == 'cat:' ~ cat }}>All {{ cat|lower }} actions</option>
+        {% for name, label in items %}<option value="{{ name }}" {{ 'selected' if args.action == name }}>{{ label }}</option>{% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select></label>
+  <label>Search <input name="q" value="{{ args.q or '' }}" placeholder="ID, name or IP" size="14"></label>
+  <button>Filter</button>
+  <a class="button secondary" href="{{ url_for('admin.logs_csv', **args) }}">Export CSV</a>
+</form>
+
+<table class="logs">
+  <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
+  <tbody>
+  {% for e in logs %}
+    {% set cat = e.action.split('.')[0] %}
+    <tr>
+      <td class="nowrap">{{ e.at.astimezone().strftime('%d/%m/%Y %H:%M:%S') }}</td>
+      <td>{{ e.actor }}</td>
+      <td><span class="pill {{ 'ko' if e.action in ('auth.login_failed', 'auth.login_locked') or e.action.endswith('.delete') else 'log-' ~ cat }}">{{ e.action|audit_label }}</span></td>
+      <td>{% if e.target_label or e.target_id %}{{ e.target_label or '' }}{% if e.target_id and e.target_id != e.target_label %} <span class="muted">({{ e.target_type }} {{ e.target_id }})</span>{% endif %}{% endif %}</td>
+      <td class="log-details">
+        {% if e.details %}
+        <ul>
+          {% for key, value in e.details.items() %}
+            {% if value is mapping %}
+              <li><b>{{ key|replace('_', ' ') }}</b>: {% for k, v in value.items() %}{{ k }}={{ v|audit_value }}{{ ', ' if not loop.last }}{% endfor %}</li>
+            {% elif value is sequence and value is not string and value|length == 2 and e.action.endswith(('.update', '.rename', '.deactivate', '.disable')) and key not in ('departments', 'no_usable_face') %}
+              <li><b>{{ key|replace('_', ' ') }}</b>: <s>{{ value[0]|audit_value }}</s> → {{ value[1]|audit_value }}</li>
+            {% else %}
+              <li><b>{{ key|replace('_', ' ') }}</b>: {{ value|audit_value }}</li>
+            {% endif %}
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </td>
+      <td class="muted nowrap">{{ e.ip or '' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No action in this period</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if total > per_page %}
+<nav class="pager">
+  {% if page > 1 %}<a class="button secondary small" href="{{ url_for('admin.logs', page=page - 1, **args) }}">← Newer</a>{% endif %}
+  <span class="muted">{{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total]|min }} of {{ total }}</span>
+  {% if page * per_page < total %}<a class="button secondary small" href="{{ url_for('admin.logs', page=page + 1, **args) }}">Older →</a>{% endif %}
+</nav>
+{% else %}
+<p class="muted small">{{ total }} action{{ '' if total == 1 else 's' }}</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='date_fields.js') }}"></script>
+{% endblock %}

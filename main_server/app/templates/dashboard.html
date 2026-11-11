@@ -3,28 +3,28 @@
 {% block content %}
 <h1>Today</h1>
 <div class="stats">
-  <div class="card"><b>{{ stats.users }}</b><span>active users</span></div>
+  <div class="card"><b>{{ stats.collaborators }}</b><span>active collaborators</span></div>
   <div class="card"><b>{{ stats.today }}</b><span>check-ins today</span></div>
   <div class="card"><b>{{ stats.late }}</b><span>KO today</span></div>
-  <a class="card {{ 'alert' if stats.flagged }}" href="{{ url_for('admin.checkins', face='flagged') }}" title="Snapshot doesn't match the user's photo, has no face, is missing or replayed, or the check-in arrived late"><b>{{ stats.flagged }}</b><span>flagged for review</span></a>
-  <a class="card {{ 'alert' if stats.outside }}" href="{{ url_for('admin.checkins', area='outside') }}" title="Check-ins whose phone GPS location was outside the relay's site area"><b>{{ stats.outside }}</b><span>outside site area</span></a>
-  <a class="card {{ 'warn' if stats.missing_face }}" href="{{ url_for('admin.users') }}"><b>{{ stats.missing_face }}</b><span>users without face data</span></a>
+  <a class="card {{ 'alert' if stats.flagged }}" href="{{ url_for('admin.attendances', face='flagged') }}" title="Snapshot doesn't match the collaborator's photo, has no face, is missing or replayed, or the check-in arrived late"><b>{{ stats.flagged }}</b><span>flagged for review</span></a>
+  <a class="card {{ 'alert' if stats.outside }}" href="{{ url_for('admin.attendances', area='outside') }}" title="Check-ins whose phone GPS location was outside the relay's site area"><b>{{ stats.outside }}</b><span>outside site area</span></a>
+  {% if can('collaborators.view') %}<a class="card {{ 'warn' if stats.missing_face }}" href="{{ url_for('admin.collaborators') }}">{% else %}<div class="card {{ 'warn' if stats.missing_face }}">{% endif %}<b>{{ stats.missing_face }}</b><span>collaborators without face data</span>{{ '</a>'|safe if can('collaborators.view') else '</div>'|safe }}
 </div>
 {% if outside %}
 <div class="flash warn area-warning">
   <b>{{ stats.outside }} check-in{{ 's' if stats.outside > 1 }} made outside the site area today</b>
   <ul>
   {% for c in outside %}
-    <li>{{ c.local_timestamp.strftime('%H:%M') }} · {{ c.user_id }} {{ c.user.full_name }} · {{ c.direction }} at {{ c.relay_label }} —
+    <li>{{ c.local_timestamp.strftime('%H:%M') }} · {{ c.collaborator_id }} {{ c.collaborator.full_name }} · {{ c.direction }} at {{ c.relay_label }} —
       {% if c.area_excess is not none %}{{ c.area_excess|km }} outside the area{% endif %}
       (<a href="https://www.openstreetmap.org/?mlat={{ '%.6f'|format(c.latitude) }}&amp;mlon={{ '%.6f'|format(c.longitude) }}#map=17/{{ '%.6f'|format(c.latitude) }}/{{ '%.6f'|format(c.longitude) }}" target="_blank" rel="noopener">map</a>)</li>
   {% endfor %}
   </ul>
-  {% if stats.outside > outside|length %}<a href="{{ url_for('admin.checkins', area='outside') }}">See all</a>{% endif %}
+  {% if stats.outside > outside|length %}<a href="{{ url_for('admin.attendances', area='outside') }}">See all</a>{% endif %}
 </div>
 {% endif %}
 {% if relays_without_area %}
-<div class="flash warn">No site area for {{ relays_without_area|map(attribute='name')|join(', ') }}: check-in locations from {{ 'this relay' if relays_without_area|length == 1 else 'these relays' }} are recorded but not checked. <a href="{{ url_for('admin.relays') }}">Set the area</a></div>
+<div class="flash warn">No site area for {{ relays_without_area|map(attribute='name')|join(', ') }}: check-in locations from {{ 'this relay' if relays_without_area|length == 1 else 'these relays' }} are recorded but not checked.{% if can('relays.manage') %} <a href="{{ url_for('admin.relays') }}">Set the area</a>{% endif %}</div>
 {% endif %}
 {% if face_engine and not face_engine.ok %}
 <div class="flash warn">Face check not running yet: {{ face_engine.message }}</div>
@@ -43,7 +43,7 @@
       <td>{% if not r.enabled %}<span class="pill">disabled</span>{% elif online %}<span class="pill ok">online</span>{% else %}<span class="pill ko">offline</span>{% endif %}</td>
     </tr>
   {% else %}
-    <tr><td colspan="4" class="muted">No relay yet — <a href="{{ url_for('admin.relays') }}">add one</a></td></tr>
+    <tr><td colspan="4" class="muted">No relay yet{% if can('relays.manage') %} — <a href="{{ url_for('admin.relays') }}">add one</a>{% endif %}</td></tr>
   {% endfor %}
   </tbody>
 </table>

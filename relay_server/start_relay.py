@@ -24,7 +24,7 @@ from relay.face_engine import FaceEngine
 from relay.face_models import ModelStatus
 from relay.identity import Identifier
 from relay.machine_id import get_machine_id
-from relay.secure_store import SecretStore, restrict_dir, take_from_ini
+from relay.secure_store import SecretStore, restrict_dir, take_from_conf
 from relay.sync import SyncWorker
 from relay.web_api import WebServer, create_web_app
 
@@ -41,7 +41,7 @@ def show_error(message: str):
 
 def main():
     parser = argparse.ArgumentParser(description="in-Time relay server")
-    parser.add_argument("--config", type=Path, help="path to relay.ini")
+    parser.add_argument("--config", type=Path, help="path to relay.conf")
     parser.add_argument("--no-gui", action="store_true", help="run without the graphical UI")
     args = parser.parse_args()
     try:
@@ -74,9 +74,9 @@ def run(args):
                         handlers=handlers)
     log = logging.getLogger("relay")
 
-    # Token: moved out of relay.ini into the protected store (DPAPI on Windows)
+    # Token: moved out of relay.conf into the protected store (DPAPI on Windows)
     store = SecretStore(cfg.data_dir)
-    take_from_ini(cfg.ini_path, store, [("main_server", "token", "token")])
+    take_from_conf(cfg.conf_path, store, [("main_server", "token", "token")])
     cfg.token = store.get("token", "")
     for old in ("license_key", "license_session"):  # left by a version that needed a license
         store.delete(old)
@@ -86,7 +86,7 @@ def run(args):
     clock.sync_once()  # first check before accepting phones
     clock.start()
     if cfg.tz_from_pc:
-        log.warning("No [time] timezone in relay.ini: using the PC time zone (%s). Set it to prevent tampering.",
+        log.warning("No [time] timezone in relay.conf: using the PC time zone (%s). Set it to prevent tampering.",
                     cfg.tz_name)
 
     machine_id = get_machine_id(cfg.data_dir)
@@ -118,7 +118,7 @@ def run(args):
     identifier = Identifier(engine, db, cfg.min_similarity)
     identifier.set_min_similarity(db.get("settings", {}).get("min_similarity"))  # last value from the main server
     identifier.start()
-    sync = SyncWorker(cfg, db, clock, on_users_synced=identifier.refresh, machine_id=machine_id,
+    sync = SyncWorker(cfg, db, clock, on_collaborators_synced=identifier.refresh, machine_id=machine_id,
                       on_settings=lambda s: identifier.set_min_similarity(s.get("min_similarity")),
                       identity=identity)
 

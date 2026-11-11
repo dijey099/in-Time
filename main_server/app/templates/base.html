@@ -11,12 +11,21 @@
   <script>document.documentElement.classList.add('js')</script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
-{% if session.admin %}
-{% set nav = [('admin.dashboard', 'Dashboard'), ('admin.checkins', 'Check-ins'), ('admin.users', 'Users'),
-              ('admin.companies', 'Companies'), ('admin.relays', 'Relays'), ('admin.settings', 'Settings')] %}
+{% if session.admin and current_user %}
+{% set settings_home = 'admin.settings' if can('settings.general') else 'admin.settings_users' %}
+{% set all_nav = [('admin.dashboard', 'Dashboard', 'dashboard.view'), ('admin.attendances', 'Attendances', 'attendances.view'),
+                  ('admin.collaborators', 'Collaborators', 'collaborators.view'), ('admin.companies', 'Companies', 'companies.view'),
+                  ('admin.relays', 'Relays', 'relays.manage'),
+                  (settings_home, 'Settings', 'settings.general' if can('settings.general') else 'access.manage'),
+                  ('admin.logs', 'Logs', 'logs.view')] %}
+{% set nav = [] %}{% for endpoint, label, perm in all_nav if can(perm) %}{% set _ = nav.append((endpoint, label)) %}{% endfor %}
+{% macro nav_active(endpoint) -%}
+  {{- request.endpoint == endpoint
+      or (endpoint == 'admin.collaborators' and request.endpoint == 'admin.collaborator_form')
+      or (endpoint == settings_home and (request.endpoint or '').startswith('admin.settings')) -}}
+{%- endmacro %}
 {% set ns = namespace(current='Menu') %}
-{% for endpoint, label in nav if request.endpoint == endpoint
-   or (endpoint == 'admin.users' and request.endpoint == 'admin.user_form') %}{% set ns.current = label %}{% endfor %}
+{% for endpoint, label in nav if nav_active(endpoint) == 'True' %}{% set ns.current = label %}{% endfor %}
 <header class="top" id="top">
   <a class="brand" href="{{ url_for('admin.dashboard') }}">
     <span class="brand-tile"><img src="{{ url_for('static', filename='img/logo.png') }}" alt="" width="28" height="28"></span>
@@ -31,10 +40,14 @@
   <div class="top-menu" id="top-menu">
     <nav>
       {% for endpoint, label in nav %}
-        {% set is_active = request.endpoint == endpoint or (endpoint == 'admin.users' and request.endpoint == 'admin.user_form') %}
+        {% set is_active = nav_active(endpoint) == 'True' %}
         <a href="{{ url_for(endpoint) }}" class="{{ 'active' if is_active }}" {{ 'aria-current="page"'|safe if is_active }}>{{ label }}</a>
       {% endfor %}
     </nav>
+    {% if current_user %}
+    <a class="whoami {{ 'active' if request.endpoint == 'admin.account' }}" href="{{ url_for('admin.account') }}" title="My account">
+      <span class="who">{{ current_user.username }}</span><span class="role">{{ role_label(current_role) }}</span></a>
+    {% endif %}
     <form method="post" action="{{ url_for('admin.logout') }}" class="logout">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
       <button class="ghost-light">Log out</button>

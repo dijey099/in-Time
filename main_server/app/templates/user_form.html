@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Edit ' ~ user.id if user else 'New user' }}{% endblock %}
+{% block title %}{{ 'Edit ' ~ user.id if user else 'New collaborator' }}{% endblock %}
 {% block content %}
-<h1>{{ 'Edit user ' ~ user.id if user else 'New user' }}</h1>
+<h1>{{ 'Edit collaborator ' ~ user.id if user else 'New collaborator' }}</h1>
 <form method="post" enctype="multipart/form-data" class="card" id="user-form">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   <input type="hidden" name="descriptor" id="descriptor">
@@ -32,7 +32,7 @@
   </div>
   <p class="muted hidden" id="no-department">This company has no department yet: <a href="{{ url_for('admin.companies') }}">add one on the Companies page</a>.</p>
   {% if user and user.legacy_department and not user.department_id %}
-    <p class="error">This user had the department "{{ user.legacy_department }}" (old setting): choose a company and department.</p>
+    <p class="error">This collaborator had the department "{{ user.legacy_department }}" (old setting): choose a company and department.</p>
   {% endif %}
   {% else %}
   <p class="error">No company yet: <a href="{{ url_for('admin.companies') }}">create a company and its departments</a> first.</p>
@@ -69,8 +69,8 @@
         {% endif %}
       </div>
       <div>
-        <p id="face-status" class="muted">{% if user and user.face_embedding %}Face data present.{% elif user and user.photo_path and user.face_model %}No usable face in this photo: the user can't check in.{% elif user and user.photo_path %}Photo not checked by the server yet.{% else %}No photo yet.{% endif %}</p>
-        <label class="check"><input type="checkbox" name="allow_no_face" id="allow_no_face"> Save the photo even if no face is detected (user won't be recognised)</label>
+        <p id="face-status" class="muted">{% if user and user.face_embedding %}Face data present.{% elif user and user.photo_path and user.face_model %}No usable face in this photo: the collaborator can't check in.{% elif user and user.photo_path %}Photo not checked by the server yet.{% else %}No photo yet.{% endif %}</p>
+        <label class="check"><input type="checkbox" name="allow_no_face" id="allow_no_face"> Save the photo even if no face is detected (collaborator won't be recognised)</label>
       </div>
     </div>
   </fieldset>

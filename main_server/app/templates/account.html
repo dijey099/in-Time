@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}My account{% endblock %}
+{% block content %}
+<h1>My account</h1>
+<div class="card narrow">
+  <p><b>{{ user.username }}</b>{% if user.full_name %} · {{ user.full_name }}{% endif %}</p>
+  <p>Role: <span class="pill role-{{ current_role }}">{{ role_label(current_role) }}</span>
+    {% if groups %} · groups: {% for grp in groups %}<span class="tag">{{ grp.name }}</span>{% endfor %}{% endif %}</p>
+  <p class="muted">Account: {{ sources.get(user.source, 'Built-in administrator (main.conf)') }}</p>
+</div>
+{% if user.source == 'local' %}
+<form method="post" class="card narrow" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <h2>Change my password</h2>
+  <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+  <label>New password <span class="muted">— {{ password_min }}+ characters, letters and digits</span>
+    <input name="password" type="password" autocomplete="new-password" minlength="{{ password_min }}" required></label>
+  <label>Repeat new password <input name="password2" type="password" autocomplete="new-password" required></label>
+  <button>Change password</button>
+</form>
+{% elif user.source == 'env' %}
+<p class="muted">This password is set in the server's main.conf file ([admin] password).</p>
+{% else %}
+<p class="muted">Your password is managed by {{ sources[user.source] }}: change it there.</p>
+{% endif %}
+{% endblock %}
