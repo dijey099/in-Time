@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Companies{% endblock %}
+{% block content %}
+<div class="row">
+  <h1>Companies</h1>
+</div>
+
+<form method="post" class="card company-new">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <h2>New company</h2>
+  <div class="row tight company-fields">
+    <label>Name <input name="name" required maxlength="100" placeholder="e.g. Acme Madagascar" value="{{ form.get('name', '') }}"></label>
+    <label>Departments <span class="muted">— optional, one per line or comma separated</span>
+      <textarea name="departments" rows="2" placeholder="Sales, Direction, Manager">{{ form.get('departments', '') }}</textarea></label>
+  </div>
+  <button>Create company</button>
+</form>
+
+{% for c in companies %}
+{% set n_users = company_users.get(c.id, 0) %}
+<section class="card company-card" id="company-{{ c.id }}">
+  <div class="company-head">
+    <h2>{{ c.name }}</h2>
+    <a class="pill" href="{{ url_for('admin.users', company=c.id) }}" title="Show this company's users">{{ n_users }} user{{ '' if n_users == 1 else 's' }}</a>
+    <span class="spacer"></span>
+    <details class="rename">
+      <summary class="button secondary small">Rename</summary>
+      <form method="post" action="{{ url_for('admin.company_edit', company_id=c.id) }}" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <input name="name" required maxlength="100" value="{{ c.name }}" aria-label="New name of {{ c.name }}">
+        <button class="small">Save</button>
+      </form>
+    </details>
+    <form method="post" action="{{ url_for('admin.company_delete', company_id=c.id) }}"
+          onsubmit="return confirm('Delete the company {{ c.name|e }} and its departments?')">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button class="link danger" {{ 'disabled title="Move its users to another company first"'|safe if n_users }}>Delete</button>
+    </form>
+  </div>
+
+  <table class="dept-table">
+    <thead><tr><th>Department</th><th>Users</th><th></th></tr></thead>
+    <tbody>
+    {% for d in c.departments %}
+      {% set n = dept_users.get(d.id, 0) %}
+      <tr>
+        <td>{{ d.name }}</td>
+        <td>{% if n %}<a href="{{ url_for('admin.users', company=c.id, department=d.id) }}">{{ n }}</a>{% else %}<span class="muted">0</span>{% endif %}</td>
+        <td class="actions">
+          <details class="rename">
+            <summary class="link">Rename</summary>
+            <form method="post" action="{{ url_for('admin.department_edit', department_id=d.id) }}" class="inline">
+              <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+              <input name="name" required maxlength="100" value="{{ d.name }}" aria-label="New name of {{ d.name }}">
+              <button class="small">Save</button>
+            </form>
+          </details>
+          <form method="post" action="{{ url_for('admin.department_delete', department_id=d.id) }}"
+                onsubmit="return confirm('Delete the department {{ d.name|e }}?')">
+            <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+            <button class="link danger" {{ 'disabled title="Move its users to another department first"'|safe if n }}>Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">No department yet: users can't be added to this company until it has one.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <form method="post" action="{{ url_for('admin.department_add', company_id=c.id) }}" class="inline dept-add">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <input name="names" required placeholder="New department (or several, comma separated)" aria-label="New department of {{ c.name }}">
+    <button class="secondary">Add department</button>
+  </form>
+</section>
+{% else %}
+<p class="muted">No company yet. Create one above, with its departments: every user belongs to a company and one of its departments.</p>
+{% endfor %}
+{% endblock %}

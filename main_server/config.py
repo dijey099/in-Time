@@ -90,5 +90,3 @@ class Config:
     # Address search on the map (Nominatim API). Empty: no search box, the site is clicked on the map.
     MAP_SEARCH_URL = os.environ.get("MAP_SEARCH_URL", "https://nominatim.openstreetmap.org/search").strip()
 
-    # Departments a user can belong to (comma separated in .env), e.g. Sales,Direction,Manager
-    DEPARTMENTS = list(dict.fromkeys(d.strip() for d in os.environ.get("DEPARTMENTS", "").split(",") if d.strip()))

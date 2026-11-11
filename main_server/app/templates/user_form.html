@@ -9,19 +9,33 @@
     <label>ID <input name="id" required pattern="[A-Za-z0-9_\-]{1,64}" value="{{ request.form.id or '' }}" placeholder="e.g. E001"></label>
   {% endif %}
   <label>Full name <input name="full_name" required value="{{ request.form.full_name or (user.full_name if user else '') }}"></label>
-  {% set current_dept = request.form.department or (user.department if user else '') %}
-  <label>Department
-    {% if departments %}
-    <select name="department" required>
-      <option value="" disabled {{ 'selected' if current_dept not in departments }}>— choose a department —</option>
-      {% for d in departments %}<option {{ 'selected' if d == current_dept }}>{{ d }}</option>{% endfor %}
-    </select>
-    {% else %}
-    <span class="error">No departments configured: set <code>DEPARTMENTS</code> in the main server <code>.env</code>.</span>
-    {% endif %}
-  </label>
-  {% if departments and user and user.department and user.department not in departments %}
-    <p class="error">This user's department "{{ user.department }}" is no longer in DEPARTMENTS: choose another one.</p>
+  {% set current_company = (request.form.company_id or (user.company_id if user and user.company_id else ''))|string %}
+  {% set current_dept = (request.form.department_id or (user.department_id if user and user.department_id else ''))|string %}
+  {% if companies %}
+  <div class="row tight company-fields">
+    <label>Company
+      <select name="company_id" id="company" required>
+        <option value="" disabled {{ 'selected' if not current_company }}>— choose a company —</option>
+        {% for c in companies %}<option value="{{ c.id }}" {{ 'selected' if c.id|string == current_company }}>{{ c.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Department
+      <select name="department_id" id="department" required>
+        <option value="" disabled {{ 'selected' if not current_dept }}>— choose a department —</option>
+        {% for c in companies if c.departments %}
+        <optgroup label="{{ c.name }}" data-company="{{ c.id }}">
+          {% for d in c.departments %}<option value="{{ d.id }}" {{ 'selected' if d.id|string == current_dept }}>{{ d.name }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <p class="muted hidden" id="no-department">This company has no department yet: <a href="{{ url_for('admin.companies') }}">add one on the Companies page</a>.</p>
+  {% if user and user.legacy_department and not user.department_id %}
+    <p class="error">This user had the department "{{ user.legacy_department }}" (old setting): choose a company and department.</p>
+  {% endif %}
+  {% else %}
+  <p class="error">No company yet: <a href="{{ url_for('admin.companies') }}">create a company and its departments</a> first.</p>
   {% endif %}
   <label class="check"><input type="checkbox" name="active" {{ 'checked' if not user or user.active }}> Active</label>
 
@@ -69,6 +83,29 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='vendor/face-api/face-api.js') }}"></script>
 <script src="{{ url_for('static', filename='faces.js') }}"></script>
+<script>
+// Department list: only the departments of the selected company
+(function () {
+  const company = document.getElementById('company'), dept = document.getElementById('department');
+  if (!company || !dept) return;
+  const placeholder = dept.options[0], note = document.getElementById('no-department');
+  function sync() {
+    const id = company.value;
+    let any = false;
+    for (const g of dept.querySelectorAll('optgroup')) {
+      const show = id === g.dataset.company;
+      g.hidden = !show; g.disabled = !show; any = any || show;
+    }
+    const sel = dept.selectedOptions[0];
+    if (!sel || sel.parentElement.disabled) { placeholder.selected = true; }
+    dept.disabled = !any;
+    placeholder.textContent = !id ? '— choose a company first —' : any ? '— choose a department —' : '— no department —';
+    note.classList.toggle('hidden', !id || any);
+  }
+  company.addEventListener('change', sync);
+  sync();
+})();
+</script>
 <script>
 const MODEL_URL = '{{ url_for("static", filename="vendor/face-api/model") }}';
 const $ = (id) => document.getElementById(id);

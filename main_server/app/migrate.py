@@ -4,6 +4,7 @@ db.create_all() creates missing tables but never alters existing ones, so new
 columns are added here (idempotent, safe to run at every start).
 """
 import logging
+import os
 
 from sqlalchemy import inspect, text
 
@@ -18,13 +19,43 @@ NEW_COLUMNS = {
                  ("latitude", "DOUBLE PRECISION"), ("longitude", "DOUBLE PRECISION"),
                  ("location_accuracy", "DOUBLE PRECISION"), ("area_check", "VARCHAR(12)"),
                  ("area_distance", "DOUBLE PRECISION")],
-    "users": [("department", "VARCHAR(100)"), ("face_embedding", "JSON"), ("face_model", "VARCHAR(32)")],
+    "users": [("department", "VARCHAR(100)"), ("face_embedding", "JSON"), ("face_model", "VARCHAR(32)"),
+              ("company_id", "INTEGER REFERENCES companies(id)"),
+              ("department_id", "INTEGER REFERENCES departments(id)")],
     "relays": [("local_relay", "BOOLEAN NOT NULL DEFAULT FALSE"), ("instance_id", "VARCHAR(64)"),
                ("timezone", "VARCHAR(64)"), ("online_since", "TIMESTAMP WITH TIME ZONE"),
                ("last_seq", "INTEGER"), ("seq_key", "VARCHAR(64)"), ("public_key", "VARCHAR(64)"),
                ("area_lat", "DOUBLE PRECISION"), ("area_lng", "DOUBLE PRECISION"),
                ("area_radius", "DOUBLE PRECISION")],
 }
+
+
+DEFAULT_COMPANY = "Default company"
+
+
+def _seed_default_company(conn):
+    """First start with companies: the departments of the old DEPARTMENTS setting (.env) and those
+    of existing users go to one company, and users are assigned to it. Rename it on the Companies page."""
+    if conn.execute(text("SELECT COUNT(*) FROM companies")).scalar():
+        return None
+    env = [d.strip() for d in os.environ.get("DEPARTMENTS", "").split(",") if d.strip()]
+    used = [r[0].strip() for r in conn.execute(text(
+        "SELECT DISTINCT department FROM users WHERE department IS NOT NULL AND department <> ''"))]
+    names = list(dict.fromkeys(n[:100] for n in env + used if n.strip()))
+    if not names:
+        return None
+    conn.execute(text("INSERT INTO companies (name, created_at) VALUES (:n, CURRENT_TIMESTAMP)"),
+                 {"n": DEFAULT_COMPANY})
+    company_id = conn.execute(text("SELECT id FROM companies WHERE name = :n"), {"n": DEFAULT_COMPANY}).scalar()
+    for name in names:
+        conn.execute(text("INSERT INTO departments (company_id, name, created_at) "
+                          "VALUES (:c, :n, CURRENT_TIMESTAMP)"), {"c": company_id, "n": name})
+        dept_id = conn.execute(text("SELECT id FROM departments WHERE company_id = :c AND name = :n"),
+                               {"c": company_id, "n": name}).scalar()
+        conn.execute(text("UPDATE users SET company_id = :c, department_id = :d "
+                          "WHERE company_id IS NULL AND TRIM(department) = :n"),
+                     {"c": company_id, "d": dept_id, "n": name})
+    return names
 
 
 def run(db):
@@ -52,6 +83,15 @@ def run(db):
     if "checkins.snapshot_sha256" in added:
         with db.engine.begin() as conn:
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_checkins_snapshot_sha256 ON checkins (snapshot_sha256)"))
+    if "users.company_id" in added:
+        with db.engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_company_id ON users (company_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_department_id ON users (department_id)"))
+            seeded = _seed_default_company(conn)
+        if seeded:
+            log.warning("Departments are now managed on the Companies page (DEPARTMENTS in .env is no longer "
+                        "used). Created company %r with department(s) %s and assigned existing users to it.",
+                        DEFAULT_COMPANY, ", ".join(seeded))
     if "checkins.area_check" in added:
         with db.engine.begin() as conn:
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_checkins_area_check ON checkins (area_check)"))

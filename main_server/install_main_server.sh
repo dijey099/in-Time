@@ -461,7 +461,7 @@ Admin console login (generated, also in $APP/.env):
 Keep it somewhere safe; change ADMIN_PASSWORD in .env if you prefer your own (12+ characters).
 
 Next steps:
-  1. Edit the configuration (departments, proxy settings...):
+  1. Edit the configuration (proxy settings...):
        sudo nano $APP/.env
 $DB_NOTE
   2. Start the server:

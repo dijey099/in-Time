@@ -36,7 +36,7 @@ working offline, and a central **main server** collects everything.
 - **Main-server outages tolerated**: the relay caches users and settings, decides OK/KO locally and syncs check-ins when the main server is reachable again. Without **internet**, new check-ins are refused (no trusted time).
 - **Late / early detection**: IN after *max in time* or OUT before *min out time* is flagged KO. Global values with per-site overrides.
 - **Relay window**: today's check-ins with OK/KO, sync state per row (blue cloud = synced, grey = not synced), main server status (Reachable / Unreachable / Error), QR code for phones, the relay's public IP.
-- **Admin console**: users (photo upload or camera capture, face check), relays (tokens, allowed IPs, site area on a map), settings, check-in history with filters and CSV export, snapshot and location of every check-in.
+- **Admin console**: companies and their departments, users (company and department, photo upload or camera capture, face check), relays (tokens, allowed IPs, site area on a map), settings, check-in history with filters and CSV export, snapshot and location of every check-in.
 - **Relay authentication**: bearer token + allowed IP/CIDR list + per-relay signing key; works behind nginx/Apache/Traefik and Cloudflare.
 - **Open source (AGPL-3.0) and self-hosted**: no license key, no activation, no limit on users or sites.
 
@@ -50,7 +50,8 @@ working offline, and a central **main server** collects everything.
 
 ## How it works
 
-1. **Admin** adds users (ID, full name, department, photo) on the main server. The server checks that the
+1. **Admin** creates companies and their departments on the **Companies** page, then adds users (ID, full name,
+   company, one of that company's departments, photo) on the main server. The server checks that the
    photo has one usable face and keeps its face data as the reference. The photo is saved as `photos/<ID>.jpg|png`.
 2. **Relays** sync every 30 s: ping, settings, users and their photos. Each relay computes the face data
    of new or changed photos itself.
@@ -193,7 +194,7 @@ cd main_server
 cd postgres && cp .env.example .env && docker compose up -d && cd ..   # set POSTGRES_PASSWORD first
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # set SECRET_KEY, ADMIN_PASSWORD, DEPARTMENTS (and DATABASE_URL)
+cp .env.example .env          # set SECRET_KEY, ADMIN_PASSWORD (and DATABASE_URL)
 python main.py                # development: http://127.0.0.1:8000 (FLASK_DEBUG=1 for the debugger)
 # production (behind nginx + HTTPS):
 gunicorn -w 4 -b 127.0.0.1:8000 main:app
@@ -277,7 +278,6 @@ refused; **Retry rejected** sends refused ones again).
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Admin console login. **Required:** password of 12+ characters. After `LOGIN_MAX_FAILURES` (5) failed logins in a row the login is locked (see [Admin login lock](#admin-login-lock)) |
 | `ADMIN_LOCK_FILE` | Lock file of the admin login (default `admin_login.lock` next to `.env`) |
 | `SESSION_COOKIE_SECURE` | `true` when the console is served over HTTPS |
-| `DEPARTMENTS` | **Required.** Comma-separated departments, e.g. `Sales,Direction,Manager`; every user must belong to one. The server refuses to start without it |
 | `PHOTOS_DIR`, `SNAPSHOTS_DIR` | Where user photos and check-in snapshots are stored |
 | `TRUSTED_PROXIES` | Number of reverse proxies in front of the app |
 | `TRUSTED_PEERS` | Addresses of those proxies (default `127.0.0.1/32,::1/128`): forwarded headers from anyone else are ignored |
@@ -290,6 +290,12 @@ refused; **Retry rejected** sends refused ones again).
 | `FACE_MODELS_DIR` | Where the OpenCV face models are stored (default `models`) |
 | `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION` | Map tiles of the site area picker (default: OpenStreetMap, fine for a few admins). Use another provider, with its attribution, for heavier use |
 | `MAP_SEARCH_URL` | Address search of the map (Nominatim API, default OpenStreetMap's). Empty: no search box, the site is clicked on the map |
+
+Companies and departments are not set in `.env`: they are managed on the **Companies** page of the admin console
+(a company has any number of departments; every user belongs to one company and one of its departments).
+Upgrading from a version that used `DEPARTMENTS=` in `.env`: at the first start, those departments and the ones of
+existing users are put in a company named *Default company* (rename it on the Companies page) and existing users
+are assigned to it. The `DEPARTMENTS` line can then be removed from `.env`.
 
 ### Admin login lock
 

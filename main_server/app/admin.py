@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from .auth import (check_admin_credentials, clear_login_failures, client_ip, csrf_protect, csrf_token,
                    login_blocked, login_required, record_login_failure)
 from .face_engine import NoFace
-from .models import Checkin, Relay, Setting, User, db, hash_token, tz_from_name
+from .models import Checkin, Company, Department, Relay, Setting, User, db, hash_token, tz_from_name
 from . import verify
 
 admin_bp = Blueprint("admin", __name__)
@@ -114,21 +114,22 @@ def dashboard():
 @login_required
 def users():
     q = request.args.get("q", "").strip()
+    company = request.args.get("company", "")
     dept = request.args.get("department", "")
     query = User.query
     if q:
         like = f"%{q}%"
         query = query.filter((User.id.ilike(like)) | (User.full_name.ilike(like)))
-    if dept == "__none__":
-        query = query.filter((User.department.is_(None)) | (User.department == ""))
-    elif dept:
-        query = query.filter(User.department == dept)
-    departments = current_app.config["DEPARTMENTS"]
-    # users with no department, or one that is no longer in DEPARTMENTS
-    invalid = User.query.filter((User.department.is_(None)) | (User.department == "")
-                                | (User.department.notin_(departments) if departments else True)).count()
-    return render_template("users.html", users=query.order_by(User.id).all(), q=q, dept=dept,
-                           departments=departments, invalid_count=invalid)
+    if company == "__none__":
+        query = query.filter((User.company_id.is_(None)) | (User.department_id.is_(None)))
+    elif company.isdigit():
+        query = query.filter(User.company_id == int(company))
+    if dept.isdigit():
+        query = query.filter(User.department_id == int(dept))
+    # users without a company or department (created before companies existed)
+    invalid = User.query.filter((User.company_id.is_(None)) | (User.department_id.is_(None))).count()
+    return render_template("users.html", users=query.order_by(User.id).all(), q=q, company=company, dept=dept,
+                           companies=Company.query.order_by(Company.name).all(), invalid_count=invalid)
 
 
 def _photo_ext(file_storage):
@@ -178,13 +179,8 @@ def user_form(user_id=None):
             if not full_name:
                 raise ValueError("Full name is required")
             user.full_name = full_name
-            departments = current_app.config["DEPARTMENTS"]
-            if not departments:
-                raise ValueError("No departments configured: set DEPARTMENTS in the main server .env")
-            department = request.form.get("department", "").strip()
-            if department not in departments:
-                raise ValueError("Please choose the user's department")
-            user.department = department
+            company, department = _form_company_department()
+            user.company_id, user.department_id = company.id, department.id
             user.active = request.form.get("active") == "on"
 
             photo = request.files.get("photo")
@@ -216,7 +212,24 @@ def user_form(user_id=None):
             if user_id is None:
                 user = None
 
-    return render_template("user_form.html", user=user, departments=current_app.config["DEPARTMENTS"])
+    return render_template("user_form.html", user=user, companies=Company.query.order_by(Company.name).all())
+
+
+def _form_company_department():
+    """Company chosen in the user form, and a department of that company."""
+    raw_company = request.form.get("company_id", "").strip()
+    raw_dept = request.form.get("department_id", "").strip()
+    company = db.session.get(Company, int(raw_company)) if raw_company.isdigit() else None
+    if company is None:
+        if not Company.query.first():
+            raise ValueError("No company yet: create a company and its departments on the Companies page first")
+        raise ValueError("Please choose the user's company")
+    department = db.session.get(Department, int(raw_dept)) if raw_dept.isdigit() else None
+    if department is None or department.company_id != company.id:
+        if not company.departments:
+            raise ValueError(f"{company.name} has no department yet: add one on the Companies page")
+        raise ValueError(f"Please choose a department of {company.name}")
+    return company, department
 
 
 @admin_bp.post("/users/check-faces")
@@ -266,6 +279,148 @@ def photo(name):
 @login_required
 def snapshot(name):
     return send_from_directory(current_app.config["SNAPSHOTS_DIR"], name)
+
+
+# ------------------------------------------------------------------ companies
+NAME_MAX = 100
+
+
+def _clean_name(value, what):
+    name = " ".join((value or "").split())
+    if not name:
+        raise ValueError(f"{what} name is required")
+    if len(name) > NAME_MAX:
+        raise ValueError(f"{what} name must be at most {NAME_MAX} characters")
+    return name
+
+
+def _department_names(raw):
+    """Department names typed one per line or comma separated (duplicates ignored)."""
+    names = [_clean_name(n, "Department") for n in re.split(r"[,\n]", raw or "") if n.strip()]
+    return list(dict.fromkeys(names))
+
+
+def _check_company_name(name, company=None):
+    other = Company.query.filter(db.func.lower(Company.name) == name.lower()).first()
+    if other and other is not company:
+        raise ValueError(f"A company named {other.name} already exists")
+
+
+def _add_departments(company, names):
+    existing = {d.name.lower() for d in company.departments}
+    added = []
+    for name in names:
+        if name.lower() not in existing:
+            company.departments.append(Department(name=name))
+            existing.add(name.lower())
+            added.append(name)
+    return added
+
+
+@admin_bp.route("/companies", methods=["GET", "POST"])
+@login_required
+def companies():
+    if request.method == "POST":  # new company
+        try:
+            name = _clean_name(request.form.get("name"), "Company")
+            _check_company_name(name)
+            company = Company(name=name)
+            db.session.add(company)
+            _add_departments(company, _department_names(request.form.get("departments")))
+            db.session.commit()
+            flash(f"Company {company.name} created"
+                  + ("" if company.departments else ": add its departments below"), "ok")
+            return redirect(url_for("admin.companies", _anchor=f"company-{company.id}"))
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "error")
+    company_users = dict(db.session.query(User.company_id, db.func.count(User.id))
+                         .filter(User.company_id.isnot(None)).group_by(User.company_id).all())
+    dept_users = dict(db.session.query(User.department_id, db.func.count(User.id))
+                      .filter(User.department_id.isnot(None)).group_by(User.department_id).all())
+    return render_template("companies.html", companies=Company.query.order_by(Company.name).all(),
+                           company_users=company_users, dept_users=dept_users, form=request.form)
+
+
+@admin_bp.post("/companies/<int:company_id>/edit")
+@login_required
+def company_edit(company_id):
+    company = db.session.get(Company, company_id) or abort(404)
+    try:
+        name = _clean_name(request.form.get("name"), "Company")
+        _check_company_name(name, company)
+        company.name = name
+        db.session.commit()
+        flash(f"Company renamed to {company.name}", "ok")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "error")
+    return redirect(url_for("admin.companies", _anchor=f"company-{company_id}"))
+
+
+@admin_bp.post("/companies/<int:company_id>/delete")
+@login_required
+def company_delete(company_id):
+    company = db.session.get(Company, company_id) or abort(404)
+    count = User.query.filter_by(company_id=company.id).count()
+    if count:
+        flash(f"{company.name} has {count} user(s): move them to another company first", "error")
+        return redirect(url_for("admin.companies", _anchor=f"company-{company_id}"))
+    db.session.delete(company)  # and its departments
+    db.session.commit()
+    flash(f"Company {company.name} deleted", "ok")
+    return redirect(url_for("admin.companies"))
+
+
+@admin_bp.post("/companies/<int:company_id>/departments")
+@login_required
+def department_add(company_id):
+    company = db.session.get(Company, company_id) or abort(404)
+    try:
+        names = _department_names(request.form.get("names"))
+        if not names:
+            raise ValueError("Department name is required")
+        added = _add_departments(company, names)
+        if not added:
+            raise ValueError(f"{company.name} already has {'this department' if len(names) == 1 else 'these departments'}")
+        db.session.commit()
+        flash(f"Added to {company.name}: {', '.join(added)}", "ok")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "error")
+    return redirect(url_for("admin.companies", _anchor=f"company-{company_id}"))
+
+
+@admin_bp.post("/departments/<int:department_id>/edit")
+@login_required
+def department_edit(department_id):
+    dept = db.session.get(Department, department_id) or abort(404)
+    try:
+        name = _clean_name(request.form.get("name"), "Department")
+        if any(d is not dept and d.name.lower() == name.lower() for d in dept.company.departments):
+            raise ValueError(f"{dept.company.name} already has a department named {name}")
+        dept.name = name
+        db.session.commit()
+        flash(f"Department renamed to {dept.name}", "ok")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "error")
+    return redirect(url_for("admin.companies", _anchor=f"company-{dept.company_id}"))
+
+
+@admin_bp.post("/departments/<int:department_id>/delete")
+@login_required
+def department_delete(department_id):
+    dept = db.session.get(Department, department_id) or abort(404)
+    company_id = dept.company_id
+    count = User.query.filter_by(department_id=dept.id).count()
+    if count:
+        flash(f"{dept.name} has {count} user(s): move them to another department first", "error")
+    else:
+        db.session.delete(dept)
+        db.session.commit()
+        flash(f"Department {dept.name} deleted", "ok")
+    return redirect(url_for("admin.companies", _anchor=f"company-{company_id}"))
 
 
 # --------------------------------------------------------------------- relays
@@ -459,12 +614,13 @@ def checkins_csv():
     query, d_from, d_to = _filtered_checkins()
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["timestamp", "timezone", "user_id", "full_name", "relay", "direction", "status", "reason",
+    w.writerow(["timestamp", "timezone", "user_id", "full_name", "company", "department", "relay", "direction", "status", "reason",
                 "distance", "face_check", "face_similarity", "time_check", "latitude", "longitude",
                 "location_accuracy_m", "area_check", "distance_from_site_m"])
     for c in query.all():
         w.writerow([_csv_cell(v) for v in (
             c.local_timestamp.strftime("%d/%m/%Y %H:%M:%S"), c.timezone or "", c.user_id, c.user.full_name,
+            c.user.company.name if c.user.company else "", c.user.department.name if c.user.department else "",
             c.relay_label, c.direction, c.status, c.reason or "",
             f"{c.distance:.3f}" if c.distance is not None else "",
             c.verify_status or "pending", f"{c.verify_score:.3f}" if c.verify_score is not None else "",

@@ -8,27 +8,49 @@
   <title>{% block title %}in-Time{% endblock %} · in-Time</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script>document.documentElement.classList.add('js')</script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
 {% if session.admin %}
 {% set nav = [('admin.dashboard', 'Dashboard'), ('admin.checkins', 'Check-ins'), ('admin.users', 'Users'),
-              ('admin.relays', 'Relays'), ('admin.settings', 'Settings')] %}
-<header class="top">
+              ('admin.companies', 'Companies'), ('admin.relays', 'Relays'), ('admin.settings', 'Settings')] %}
+{% set ns = namespace(current='Menu') %}
+{% for endpoint, label in nav if request.endpoint == endpoint
+   or (endpoint == 'admin.users' and request.endpoint == 'admin.user_form') %}{% set ns.current = label %}{% endfor %}
+<header class="top" id="top">
   <a class="brand" href="{{ url_for('admin.dashboard') }}">
     <span class="brand-tile"><img src="{{ url_for('static', filename='img/logo.png') }}" alt="" width="28" height="28"></span>
     <span>in-Time</span>
   </a>
-  <nav>
-    {% for endpoint, label in nav %}
-      <a href="{{ url_for(endpoint) }}" class="{{ 'active' if request.endpoint == endpoint
-         or (endpoint == 'admin.users' and request.endpoint == 'admin.user_form') }}">{{ label }}</a>
-    {% endfor %}
-  </nav>
-  <form method="post" action="{{ url_for('admin.logout') }}" class="logout">
-    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-    <button class="ghost-light">Log out</button>
-  </form>
+  <button type="button" class="menu-toggle" id="menu-toggle" aria-expanded="false" aria-controls="top-menu">
+    <span class="menu-current">{{ ns.current }}</span>
+    <svg class="menu-icon" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path class="bars" d="M3 5.5h14M3 10h14M3 14.5h14"/><path class="cross" d="M5 5l10 10M15 5L5 15"/></svg>
+    <span class="visually-hidden">Open the menu</span>
+  </button>
+  <div class="top-menu" id="top-menu">
+    <nav>
+      {% for endpoint, label in nav %}
+        {% set is_active = request.endpoint == endpoint or (endpoint == 'admin.users' and request.endpoint == 'admin.user_form') %}
+        <a href="{{ url_for(endpoint) }}" class="{{ 'active' if is_active }}" {{ 'aria-current="page"'|safe if is_active }}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+    <form method="post" action="{{ url_for('admin.logout') }}" class="logout">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button class="ghost-light">Log out</button>
+    </form>
+  </div>
 </header>
+<script>
+(function () {
+  const header = document.getElementById('top'), btn = document.getElementById('menu-toggle');
+  function set(open) { header.classList.toggle('open', open); btn.setAttribute('aria-expanded', open); }
+  btn.addEventListener('click', () => set(!header.classList.contains('open')));
+  document.addEventListener('click', e => { if (!header.contains(e.target)) set(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && header.classList.contains('open')) { set(false); btn.focus(); } });
+  matchMedia('(min-width: 861px)').addEventListener('change', e => { if (e.matches) set(false); });
+})();
+</script>
 {% endif %}
 {% block page %}
 <main>

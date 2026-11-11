@@ -39,8 +39,13 @@ class User(db.Model):
 
     id = db.Column(db.String(64), primary_key=True)  # employee / badge ID
     full_name = db.Column(db.String(200), nullable=False)
-    # One of the DEPARTMENTS in .env (required in the admin form; empty only for users created before)
-    department = db.Column(db.String(100), index=True)
+    # Company and department (one of that company's departments), managed on the Companies page.
+    # Required in the admin form; empty only for users created before companies existed.
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), index=True)
+    # Department name from the old DEPARTMENTS setting in .env (before companies). No longer used:
+    # copied into a company at the first start of this version (see migrate.py).
+    legacy_department = db.Column("department", db.String(100), index=True)
     photo_path = db.Column(db.String(300))  # e.g. "photos/E001.jpg"
     # 128 floats computed by face-api.js in the admin's browser (JSON list, preview only)
     descriptor = db.Column(db.JSON)
@@ -52,6 +57,9 @@ class User(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
+    company = db.relationship("Company")
+    department = db.relationship("Department")
+
     def to_api(self):
         return {
             "id": self.id,
@@ -61,6 +69,29 @@ class User(db.Model):
             "active": self.active,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class Company(db.Model):
+    __tablename__ = "companies"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    departments = db.relationship("Department", back_populates="company", order_by="Department.name",
+                                  cascade="all, delete-orphan")
+
+
+class Department(db.Model):
+    __tablename__ = "departments"
+    __table_args__ = (db.UniqueConstraint("company_id", "name", name="uq_departments_company_name"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    name = db.Column(db.String(100), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    company = db.relationship("Company", back_populates="departments")
 
 
 class Relay(db.Model):

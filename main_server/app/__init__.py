@@ -17,14 +17,6 @@ WEAK_VALUES = {"", "admin", "change-me", "password", "test-key", "replace-with-a
 
 
 def check_config(cfg):
-    departments = cfg.get("DEPARTMENTS") or []
-    if not departments:
-        raise ConfigError(
-            "DEPARTMENTS is not set in main_server/.env. Every user must belong to a department, "
-            "so the main server can't start without it. Example: DEPARTMENTS=Sales,Direction,Manager")
-    too_long = [d for d in departments if len(d) > 100]
-    if too_long:
-        raise ConfigError(f"DEPARTMENTS: names must be at most 100 characters ({too_long[0][:40]}...)")
     if cfg.get("TESTING"):
         return
     secret = cfg.get("SECRET_KEY") or ""
